@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GORILLA.BAS</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+body { display: flex; justify-content: center; align-items: center; }
+canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  -ms-interpolation-mode: nearest-neighbor;
+}
+</style>
+</head>
+<body>
+<canvas id="game" width="640" height="350"></canvas>
+<script>
+// ============================================================
+// GORILLA.BAS - Canvas Rewrite
+// Faithful recreation of the classic QBasic game (1991)
+// Single-file, zero dependencies, 640x350 EGA resolution
+// ============================================================
+
+'use strict';
+
+// --- Canvas Setup ---
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const W = 640, H = 350;
+ctx.imageSmoothingEnabled = false;
+
+function autoScale() {
+  const sx = Math.floor(window.innerWidth / W) || 1;
+  const sy = Math.floor(window.innerHeight / H) || 1;
+  const s = Math.min(sx, sy);
+  canvas.style.width = (W * s) + 'px';
+  canvas.style.height = (H * s) + 'px';
+}
+autoScale();
+window.addEventListener('resize', autoScale);
+
+// --- EGA Color Palette ---
+const C = {
+  SKY:        '#0000AA',
+  GORILLA:    '#FFAA55',
+  BANANA:     '#FFAA55',
+  EXPLOSION:  '#FF0055',
+  SUN_YELLOW: '#FFFF00',
+  BLACK:      '#000000',
+  WHITE:      '#FFFFFF',
+  BLDG_GREY:  '#AAAAAA',
+  BLDG_RED:   '#AA0000',
+  BLDG_CYAN:  '#00AAAA',
+  WIN_LIT:    '#FFFF55',
+  WIND:       '#FF0055',
+};
+
+// Parse hex to RGB array (cached)
+const RGB_CACHE = {};
+function hexToRgb(hex) {
+  if (RGB_CACHE[hex]) return RGB_CACHE[hex];
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  RGB_CACHE[hex] = [r, g, b];
+  return RGB_CACHE[hex];
+}
+
+const SKY_RGB = hexToRgb(C.SKY);
+const GORILLA_RGB = hexToRgb(C.GORILLA);
+
+// --- Bitmap Font (5x7) ---
+const FONT_W = 5, FONT_H = 7, FONT_SPACING = 1;
+const FONT_DATA = (function() {
+  const d = {
+    'A': [0x04,0x0A,0x11,0x1F,0x11,0x11,0x11],
+    'B': [0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E],
+    'C': [0x0E,0x11,0x10,0x10,0x10,0x11,0x0E],
+    'D': [0x1E,0x11,0x11,0x11,0x11,0x11,0x1E],
+    'E': [0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],
+    'F': [0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],
+    'G': [0x0E,0x11,0x10,0x17,0x11,0x11,0x0E],
+    'H': [0x11,0x11,0x11,0x1F,0x11,0x11,0x11],
+    'I': [0x0E,0x04,0x04,0x04,0x04,0x04,0x0E],
+    'J': [0x01,0x01,0x01,0x01,0x11,0x11,0x0E],
+    'K': [0x11,0x12,0x14,0x18,0x14,0x12,0x11],
+    'L': [0x10,0x10,0x10,0x10,0x10,0x10,0x1F],
+    'M': [0x11,0x1B,0x15,0x15,0x11,0x11,0x11],
+    'N': [0x11,0x19,0x15,0x13,0x11,0x11,0x11],
+    'O': [0x0E,0x11,0x11,0x11,0x11,0x11,0x0E],
+    'P': [0x1E,0x11,0x11,0x1E,0x10,0x10,0x10],
+    'Q': [0x0E,0x11,0x11,0x11,0x15,0x12,0x0D],
+    'R': [0x1E,0x11,0x11,0x1E,0x14,0x12,0x11],
+    'S': [0x0E,0x11,0x10,0x0E,0x01,0x11,0x0E],
+    'T': [0x1F,0x04,0x04,0x04,0x04,0x04,0x04],
+    'U': [0x11,0x11,0x11,0x11,0x11,0x11,0x0E],
+    'V': [0x11,0x11,0x11,0x11,0x0A,0x0A,0x04],
+    'W': [0x11,0x11,0x11,0x15,0x15,0x1B,0x11],
+    'X': [0x11,0x11,0x0A,0x04,0x0A,0x11,0x11],
+    'Y': [0x11,0x11,0x0A,0x04,0x04,0x04,0x04],
+    'Z': [0x1F,0x01,0x02,0x04,0x08,0x10,0x1F],
+    '0': [0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],
+    '1': [0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],
+    '2': [0x0E,0x11,0x01,0x06,0x08,0x10,0x1F],
+    '3': [0x0E,0x11,0x01,0x06,0x01,0x11,0x0E],
+    '4': [0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],
+    '5': [0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E],
+    '6': [0x06,0x08,0x10,0x1E,0x11,0x11,0x0E],
+    '7': [0x1F,0x01,0x02,0x04,0x04,0x04,0x04],
+    '8': [0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E],
+    '9': [0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C],
+    ' ': [0x00,0x00,0x00,0x00,0x00,0x00,0x00],
+    '.': [0x00,0x00,0x00,0x00,0x00,0x00,0x04],
+    ',': [0x00,0x00,0x00,0x00,0x00,0x04,0x08],
+    '!': [0x04,0x04,0x04,0x04,0x04,0x00,0x04],
+    '?': [0x0E,0x11,0x01,0x06,0x04,0x00,0x04],
+    ':': [0x00,0x04,0x00,0x00,0x00,0x04,0x00],
+    ';': [0x00,0x04,0x00,0x00,0x00,0x04,0x08],
+    '-': [0x00,0x00,0x00,0x1F,0x00,0x00,0x00],
+    '+': [0x00,0x04,0x04,0x1F,0x04,0x04,0x00],
+    '=': [0x00,0x00,0x1F,0x00,0x1F,0x00,0x00],
+    '/': [0x01,0x01,0x02,0x04,0x08,0x10,0x10],
+    '(': [0x02,0x04,0x08,0x08,0x08,0x04,0x02],
+    ')': [0x08,0x04,0x02,0x02,0x02,0x04,0x08],
+    '*': [0x00,0x04,0x15,0x0E,0x15,0x04,0x00],
+    '>': [0x10,0x08,0x04,0x02,0x04,0x08,0x10],
+    '<': [0x01,0x02,0x04,0x08,0x04,0x02,0x01],
+    '#': [0x0A,0x0A,0x1F,0x0A,0x1F,0x0A,0x0A],
+    '_': [0x00,0x00,0x00,0x00,0x00,0x00,0x1F],
+    "'": [0x04,0x04,0x08,0x00,0x00,0x00,0x00],
+    '"': [0x0A,0x0A,0x0A,0x00,0x00,0x00,0x00],
+    '%': [0x18,0x19,0x02,0x04,0x08,0x13,0x03],
+    '@': [0x0E,0x11,0x17,0x15,0x17,0x10,0x0E],
+    '&': [0x0C,0x12,0x0C,0x0D,0x12,0x12,0x0D],
+    '^': [0x04,0x0A,0x11,0x00,0x00,0x00,0x00],
+  };
+  return d;
+})();
+
+function drawChar(ch, x, y, color, scale) {
+  scale = scale || 1;
+  const data = FONT_DATA[ch.toUpperCase()];
+  if (!data) return;
+  ctx.fillStyle = color;
+  for (let row = 0; row < 7; row++) {
+    for (let col = 0; col < 5; col++) {
+      if (data[row] & (0x10 >> col)) {
+        ctx.fillRect(x + col * scale, y + row * scale, scale, scale);
+      }
+    }
+  }
+}
+
+function drawText(str, x, y, color, scale) {
+  scale = scale || 1;
+  const cw = (FONT_W + FONT_SPACING) * scale;
+  for (let i = 0; i < str.length; i++) {
+    drawChar(str[i], x + i * cw, y, color, scale);
+  }
+}
+
+function textWidth(str, scale) {
+  scale = scale || 1;
+  return str.length * (FONT_W + FONT_SPACING) * scale - FONT_SPACING * scale;
+}
+
+function drawTextCentered(str, y, color, scale) {
+  scale = scale || 1;
+  const w = textWidth(str, scale);
+  drawText(str, Math.floor((W - w) / 2), y, color, scale);
+}
+
+// --- Drawing Primitives ---
+function fillRect(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+}
+
+function fillCircle(cx, cy, r, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(Math.round(cx), Math.round(cy), r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function clearToSky() {
+  fillRect(0, 0, W, H, C.SKY);
+}
+
+// --- Scene Buffer ---
+// The "scene" is the persistent playfield: sky + buildings (no gorillas).
+// Collision detection reads from this buffer, not the canvas.
+// Gorillas, sun, scoreboard, wind, prompt, banana are drawn as overlays.
+let sceneData = null;
+
+function saveScene() {
+  sceneData = ctx.getImageData(0, 0, W, H);
+}
+
+function restoreScene() {
+  if (sceneData) ctx.putImageData(sceneData, 0, 0);
+}
+
+// Read pixel from saved scene buffer (not canvas)
+function getScenePixel(x, y) {
+  const px = Math.round(x);
+  const py = Math.round(y);
+  if (px < 0 || px >= W || py < 0 || py >= H || !sceneData) return null;
+  const idx = (py * W + px) * 4;
+  return [sceneData.data[idx], sceneData.data[idx + 1], sceneData.data[idx + 2]];
+}
+
+// Clear a circular area in the scene buffer to sky
+function clearSceneCircle(cx, cy, r) {
+  const sr = SKY_RGB[0], sg = SKY_RGB[1], sb = SKY_RGB[2];
+  const rr = Math.ceil(r);
+  for (let dy = -rr; dy <= rr; dy++) {
+    for (let dx = -rr; dx <= rr; dx++) {
+      if (dx * dx + dy * dy <= r * r) {
+        const px = Math.round(cx) + dx;
+        const py = Math.round(cy) + dy;
+        if (px >= 0 && px < W && py >= 0 && py < H) {
+          const idx = (py * W + px) * 4;
+          sceneData.data[idx] = sr;
+          sceneData.data[idx + 1] = sg;
+          sceneData.data[idx + 2] = sb;
+          sceneData.data[idx + 3] = 255;
+        }
+      }
+    }
+  }
+}
+
+function rgbMatch(c, ref) {
+  return c[0] === ref[0] && c[1] === ref[1] && c[2] === ref[2];
+}
+
+// --- Sound Engine (Web Audio API) ---
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+}
+
+function playTone(freq, duration, type, volume) {
+  if (!audioCtx) return;
+  type = type || 'square';
+  volume = volume !== undefined ? volume : 0.08;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.value = volume;
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start(audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+function playThrowSound() {
+  if (!audioCtx) return;
+  for (let i = 0; i < 5; i++) {
+    setTimeout(() => playTone(300 + i * 80, 0.06), i * 40);
+  }
+}
+
+function playBuildingHitSound() {
+  if (!audioCtx) return;
+  playTone(100, 0.3, 'square', 0.1);
+  setTimeout(() => playTone(80, 0.3, 'square', 0.08), 100);
+}
+
+function playGorillaHitSound() {
+  if (!audioCtx) return;
+  for (let i = 0; i < 8; i++) {
+    setTimeout(() => playTone(600 - i * 50, 0.15, 'square', 0.1), i * 60);
+  }
+  setTimeout(() => playTone(100, 0.5, 'square', 0.12), 500);
+}
+
+function playVictorySound() {
+  if (!audioCtx) return;
+  const notes = [523, 659, 784, 1047, 784, 1047];
+  notes.forEach((freq, i) => {
+    setTimeout(() => playTone(freq, 0.15, 'square', 0.08), i * 120);
+  });
+}
+
+function playMenuBeep() {
+  playTone(800, 0.05, 'square', 0.05);
+}
+
+// --- Game State ---
+const game = {
+  state: 'TITLE', // TITLE, SETUP, INPUT, THROWING, EXPLODING, CELEBRATE, GAME_OVER
+  numPlayers: 1, // 1 = vs computer, 2 = two humans
+  players: [
+    { name: 'Player 1', score: 0, x: 0, y: 0, buildingIdx: 0 },
+    { name: 'Player 2', score: 0, x: 0, y: 0, buildingIdx: 0 },
+  ],
+  targetScore: 3,
+  gravity: 9.8,
+  wind: 0,
+  turn: 0,
+  buildings: [],
+
+  // Sun
+  sunX: W / 2, sunY: 20,
+  sunShocked: false,
+
+  // Input
+  inputField: 'angle',
+  inputBuffer: '',
+  angle: 0,
+  velocity: 0,
+  cursorTimer: 0,
+
+  // Banana flight
+  banana: { active: false, x: 0, y: 0, startX: 0, startY: 0, vx: 0, vy: 0, t: 0 },
+
+  // Explosion
+  explosion: { active: false, x: 0, y: 0, maxRadius: 0, frame: 0, hitPlayer: -1 },
+
+  // Celebration
+  celebrate: { active: false, frame: 0, totalFrames: 120, winner: -1 },
+
+  // Game over
+  gameOver: { active: false, winner: -1 },
+
+  // Title/setup
+  titleFrame: 0,
+  setupField: 0,
+  setupBuffer: '',
+  setupValues: [],
+
+  // AI
+  aiDelay: 0, // frames to wait before AI throws
+  aiMissCount: 0, // tracks misses to improve accuracy over time
+};
+
+// --- Building Generation ---
+function generateBuildings() {
+  const buildings = [];
+  let x = 0;
+  const slopeTypes = ['up', 'down', 'v', 'invv'];
+  let slope = slopeTypes[Math.floor(Math.random() * 4)];
+  let slopeLen = 3 + Math.floor(Math.random() * 4);
+  let slopeIdx = 0;
+  let baseH = 80 + Math.floor(Math.random() * 80);
+  let dir = (slope === 'up' || slope === 'invv') ? 1 : -1;
+
+  while (x < W) {
+    const bw = 30 + Math.floor(Math.random() * 60); // 30-89
+    let bh = baseH + dir * slopeIdx * (6 + Math.floor(Math.random() * 10));
+    bh = Math.max(50, Math.min(H - 80, bh));
+
+    const colors = [C.BLDG_GREY, C.BLDG_RED, C.BLDG_CYAN];
+    const color = colors[Math.floor(Math.random() * 3)];
+
+    buildings.push({ x, y: H - bh, w: Math.min(bw, W - x), h: bh, color });
+
+    x += bw + 2;
+    slopeIdx++;
+    if (slopeIdx >= slopeLen) {
+      slope = slopeTypes[Math.floor(Math.random() * 4)];
+      slopeLen = 3 + Math.floor(Math.random() * 4);
+      slopeIdx = 0;
+      baseH = 80 + Math.floor(Math.random() * 80);
+      dir = (slope === 'up' || slope === 'invv') ? 1 : -1;
+    }
+    if (slope === 'v' && slopeIdx === Math.floor(slopeLen / 2)) dir = 1;
+    if (slope === 'invv' && slopeIdx === Math.floor(slopeLen / 2)) dir = -1;
+  }
+  return buildings;
+}
+
+function drawBuildings(buildings) {
+  for (const b of buildings) {
+    fillRect(b.x, b.y, b.w, b.h, b.color);
+    // Windows: 4x7, spaced 10H/15V
+    for (let wy = b.y + 5; wy + 7 < b.y + b.h - 2; wy += 15) {
+      for (let wx = b.x + 3; wx + 4 < b.x + b.w - 2; wx += 10) {
+        if (Math.random() > 0.4) {
+          fillRect(wx, wy, 4, 7, C.WIN_LIT);
+        } else {
+          // Dark window - slightly darker than building
+          const rgb = hexToRgb(b.color);
+          const dark = '#' + rgb.map(v => Math.max(0, v - 60).toString(16).padStart(2, '0')).join('');
+          fillRect(wx, wy, 4, 7, dark);
+        }
+      }
+    }
+  }
+}
+
+// --- Sun ---
+function drawSun(shocked) {
+  const cx = game.sunX, cy = game.sunY;
+  fillCircle(cx, cy, 16, C.SUN_YELLOW);
+  // Eyes
+  fillRect(cx - 6, cy - 5, 3, 4, C.BLACK);
+  fillRect(cx + 4, cy - 5, 3, 4, C.BLACK);
+  if (shocked) {
+    ctx.fillStyle = C.BLACK;
+    ctx.beginPath(); ctx.arc(cx, cy + 6, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = C.SUN_YELLOW;
+    ctx.beginPath(); ctx.arc(cx, cy + 6, 2, 0, Math.PI * 2); ctx.fill();
+  } else {
+    ctx.strokeStyle = C.BLACK;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy + 2, 7, 0.2, Math.PI - 0.2);
+    ctx.stroke();
+  }
+}
+
+// --- Gorilla Drawing ---
+const GORILLA_W = 26, GORILLA_H = 28;
+
+function drawGorilla(x, y, armState) {
+  // armState: 0=both down, 1=left up, 2=right up, 3=both up
+  const gx = Math.round(x - GORILLA_W / 2);
+  const gy = Math.round(y - GORILLA_H);
+  const c = C.GORILLA;
+
+  // Head
+  fillRect(gx + 8, gy, 10, 8, c);
+  fillRect(gx + 10, gy + 2, 2, 2, C.BLACK); // left eye
+  fillRect(gx + 14, gy + 2, 2, 2, C.BLACK); // right eye
+  fillRect(gx + 12, gy + 5, 2, 2, C.BLACK); // nose
+
+  // Body
+  fillRect(gx + 6, gy + 8, 14, 10, c);
+
+  // Left arm
+  if (armState === 1 || armState === 3) {
+    fillRect(gx + 1, gy + 2, 5, 6, c);
+  } else {
+    fillRect(gx + 1, gy + 8, 5, 8, c);
+  }
+  // Right arm
+  if (armState === 2 || armState === 3) {
+    fillRect(gx + 20, gy + 2, 5, 6, c);
+  } else {
+    fillRect(gx + 20, gy + 8, 5, 8, c);
+  }
+
+  // Legs
+  fillRect(gx + 8, gy + 18, 4, 6, c);
+  fillRect(gx + 14, gy + 18, 4, 6, c);
+  // Feet
+  fillRect(gx + 6, gy + 24, 6, 4, c);
+  fillRect(gx + 14, gy + 24, 6, 4, c);
+}
+
+// --- Gorilla Placement ---
+function placeGorillas(buildings) {
+  const n = buildings.length;
+  const b1idx = Math.min(1 + Math.floor(Math.random() * 2), n - 1);
+  const b1 = buildings[b1idx];
+  game.players[0].x = Math.round(b1.x + b1.w / 2);
+  game.players[0].y = b1.y;
+  game.players[0].buildingIdx = b1idx;
+
+  const b2idx = Math.max(n - 2 - Math.floor(Math.random() * 2), b1idx + 1);
+  const b2 = buildings[b2idx];
+  game.players[1].x = Math.round(b2.x + b2.w / 2);
+  game.players[1].y = b2.y;
+  game.players[1].buildingIdx = b2idx;
+}
+
+// --- Wind ---
+function generateWind() {
+  let w = -4 + Math.random() * 9;
+  if (Math.random() < 0.33) w *= 2 + Math.random() * 2;
+  return Math.round(w * 10) / 10;
+}
+
+function drawWindArrow() {
+  if (Math.abs(game.wind) < 0.1) {
+    drawText('WIND: NONE', W / 2 - 30, H - 14, C.WIND, 1);
+    return;
+  }
+  const cx = W / 2, cy = H - 8;
+  const len = Math.round(game.wind * 6);
+
+  ctx.strokeStyle = C.WIND;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + len, cy); ctx.stroke();
+
+  const dir = game.wind > 0 ? 1 : -1;
+  ctx.beginPath();
+  ctx.moveTo(cx + len, cy); ctx.lineTo(cx + len - dir * 4, cy - 3);
+  ctx.moveTo(cx + len, cy); ctx.lineTo(cx + len - dir * 4, cy + 3);
+  ctx.stroke();
+
+  drawText('WIND', cx - 12, cy - 14, C.WIND, 1);
+}
+
+// --- Banana Drawing ---
+function drawBanana(x, y, rotation) {
+  const bx = Math.round(x - 3);
+  const by = Math.round(y - 3);
+  switch (rotation % 4) {
+    case 0:
+      fillRect(bx + 1, by, 4, 2, C.BANANA);
+      fillRect(bx, by + 2, 2, 2, C.BANANA);
+      break;
+    case 1:
+      fillRect(bx, by + 1, 2, 4, C.BANANA);
+      fillRect(bx + 2, by, 2, 2, C.BANANA);
+      break;
+    case 2:
+      fillRect(bx + 1, by + 2, 4, 2, C.BANANA);
+      fillRect(bx + 4, by, 2, 2, C.BANANA);
+      break;
+    case 3:
+      fillRect(bx + 2, by + 1, 2, 4, C.BANANA);
+      fillRect(bx, by + 4, 2, 2, C.BANANA);
+      break;
+  }
+}
+
+// --- Draw Playfield (saveable scene: sky + buildings only) ---
+// Gorillas are NOT saved in the scene buffer - they are drawn as overlays.
+// This avoids gorilla facial features (black pixels) causing false building hits.
+function drawPlayfield() {
+  clearToSky();
+  drawBuildings(game.buildings);
+}
+
+// Check if a point is inside a gorilla's bounding box. Returns player index or -1.
+function hitTestGorilla(px, py) {
+  for (let i = 0; i < 2; i++) {
+    const p = game.players[i];
+    const gx = p.x - GORILLA_W / 2;
+    const gy = p.y - GORILLA_H;
+    if (px >= gx && px < gx + GORILLA_W && py >= gy && py < gy + GORILLA_H) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// --- Draw Overlays (sun, scoreboard, wind - not saved) ---
+function drawOverlays() {
+  drawSun(game.sunShocked);
+  drawScoreboard();
+  drawWindArrow();
+}
+
+function drawScoreboard() {
+  const p1 = game.players[0];
+  const p2 = game.players[1];
+  const s1 = p1.name.toUpperCase() + ': ' + p1.score;
+  const s2 = p2.name.toUpperCase() + ': ' + p2.score;
+  drawText(s1, 4, 4, C.WHITE, 1);
+  drawText(s2, W - textWidth(s2, 1) - 4, 4, C.WHITE, 1);
+}
+
+// --- Input Handling ---
+document.addEventListener('keydown', function(e) {
+  ensureAudio();
+
+  // Escape: return to title screen from any state (except title itself)
+  if (e.key === 'Escape' && game.state !== 'TITLE') {
+    game.state = 'TITLE';
+    game.titleFrame = 0;
+    game.banana.active = false;
+    game.explosion.active = false;
+    game.celebrate.active = false;
+    return;
+  }
+
+  if (game.state === 'TITLE') {
+    game.state = 'SETUP';
+    game.setupField = 0;
+    // Fields: 0=numPlayers, 1=p1name, 2=p2name (skipped in 1P), 3=targetScore
+    game.setupValues = ['' + game.numPlayers, game.players[0].name, game.players[1].name, '' + game.targetScore];
+    game.setupBuffer = game.setupValues[0];
+    return;
+  }
+
+  if (game.state === 'GAME_OVER') {
+    if (e.key === 'y' || e.key === 'Y') {
+      startNewGame();
+    } else if (e.key === 'n' || e.key === 'N') {
+      game.state = 'TITLE';
+      game.titleFrame = 0;
+    }
+    return;
+  }
+
+  if (game.state === 'SETUP') {
+    handleSetupInput(e);
+    return;
+  }
+
+  if (game.state === 'INPUT') {
+    handleGameInput(e);
+  }
+});
+
+function handleSetupInput(e) {
+  if (e.key === 'Enter') {
+    game.setupValues[game.setupField] = game.setupBuffer || game.setupValues[game.setupField];
+    game.setupField++;
+
+    // After numPlayers field, if 1P mode, skip player 2 name
+    if (game.setupField === 1) {
+      game.numPlayers = parseInt(game.setupValues[0]) || 1;
+      if (game.numPlayers < 1) game.numPlayers = 1;
+      if (game.numPlayers > 2) game.numPlayers = 2;
+    }
+    if (game.setupField === 2 && game.numPlayers === 1) {
+      game.setupValues[2] = 'Computer';
+      game.setupField = 3; // skip to target score
+    }
+
+    if (game.setupField >= 4) {
+      game.players[0].name = game.setupValues[1] || 'Player 1';
+      game.players[1].name = game.setupValues[2] || (game.numPlayers === 1 ? 'Computer' : 'Player 2');
+      game.targetScore = parseInt(game.setupValues[3]) || 3;
+      if (game.targetScore < 1) game.targetScore = 1;
+      startNewGame();
+      return;
+    }
+    game.setupBuffer = game.setupValues[game.setupField];
+    playMenuBeep();
+  } else if (e.key === 'Backspace') {
+    game.setupBuffer = game.setupBuffer.slice(0, -1);
+  } else if (e.key.length === 1 && game.setupBuffer.length < 16) {
+    game.setupBuffer += e.key;
+  }
+}
+
+function handleGameInput(e) {
+  if (e.key === 'Enter') {
+    const val = parseFloat(game.inputBuffer);
+    if (game.inputField === 'angle') {
+      if (!isNaN(val)) {
+        game.angle = val;
+        game.inputField = 'velocity';
+        game.inputBuffer = '';
+        playMenuBeep();
+      }
+    } else {
+      if (!isNaN(val) && val > 0) {
+        game.velocity = val;
+        game.inputField = 'angle';
+        game.inputBuffer = '';
+        startThrow();
+      }
+    }
+  } else if (e.key === 'Backspace') {
+    game.inputBuffer = game.inputBuffer.slice(0, -1);
+  } else if ((e.key >= '0' && e.key <= '9') || e.key === '.' || e.key === '-') {
+    if (game.inputBuffer.length < 8) {
+      game.inputBuffer += e.key;
+    }
+  }
+}
+
+// --- AI ---
+function isAiTurn() {
+  return game.numPlayers === 1 && game.turn === 1;
+}
+
+function aiCalculateShot() {
+  // AI is player 1 (index 1), target is player 0
+  const me = game.players[1];
+  const target = game.players[0];
+  const sx = me.x;
+  const sy = me.y - GORILLA_H - 5;
+  const tx = target.x;
+  const ty = target.y - GORILLA_H / 2;
+
+  const dx = sx - tx; // positive because AI is on the right, throwing left
+  const dy = ty - sy; // positive if target is below
+
+  // Pick a loft angle (50-75 degrees works well for arcing shots)
+  const baseAngle = 55 + Math.random() * 20;
+  const angleRad = baseAngle * Math.PI / 180;
+
+  // For player 2, angle is mirrored: angleRad maps to (180 - angle) internally.
+  // We need to solve for velocity given angle.
+  // Using the trajectory equations for player 2:
+  //   finalAngleRad = (180 - angle) * PI / 180
+  //   vx = cos(finalAngleRad) * v  (negative, going left)
+  //   vy = -sin(finalAngleRad) * v  (negative, going up)
+  //
+  // At landing: tx = sx + vx*t + 0.5*(wind/5)*t^2
+  //             ty = sy + vy*t + 0.5*g*t^2
+  //
+  // Solve for v using x equation and a reasonable flight time.
+  // Estimate flight time from y equation: t ≈ 2*v*sin(angle)/g
+  // Then: dx = -cos(angle)*v*t + 0.5*(wind/5)*t^2
+
+  // Simpler approach: iterate to find a good velocity
+  const windEffect = game.wind / 5;
+  const cosA = Math.cos(angleRad);
+  const sinA = Math.sin(angleRad);
+
+  // Player 2's internal conversion: vx = cos(180-angle)*v = -cos(angle)*v
+  // vy = -sin(180-angle)*v = -sin(angle)*v
+  // x(t) = sx + (-cosA*v)*t + 0.5*windEffect*t^2
+  // y(t) = sy + (-sinA*v)*t + 0.5*g*t^2
+  //
+  // We want x(t) = tx → dx = sx - tx = cosA*v*t - 0.5*windEffect*t^2
+  // We want y(t) = ty → dy = ty - sy = -sinA*v*t + 0.5*g*t^2
+  //
+  // From y: t = (sinA*v ± sqrt(sinA^2*v^2 - 2*g*dy)) / g
+  // Let's just binary search for v.
+
+  let bestV = 60;
+  let bestDist = Infinity;
+  for (let v = 20; v <= 200; v += 2) {
+    // Simulate trajectory
+    const vxSim = -cosA * v;
+    const vySim = -sinA * v;
+    let hitX = sx, hitY = sy;
+    for (let t = 0.2; t < 50; t += 0.2) {
+      hitX = sx + vxSim * t + 0.5 * windEffect * t * t;
+      hitY = sy + vySim * t + 0.5 * game.gravity * t * t;
+      if (hitY >= ty) break;
+      if (hitX < -30) break;
+    }
+    const dist = Math.abs(hitX - tx);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestV = v;
+    }
+  }
+
+  // Add error that decreases as AI misses more (it "learns")
+  const errorScale = Math.max(0.05, 0.35 - game.aiMissCount * 0.05);
+  const angleError = (Math.random() - 0.5) * 30 * errorScale;
+  const velError = (Math.random() - 0.5) * bestV * 0.4 * errorScale;
+
+  return {
+    angle: Math.round(Math.max(5, Math.min(85, baseAngle + angleError))),
+    velocity: Math.round(Math.max(10, bestV + velError)),
+  };
+}
+
+function startAiTurn() {
+  game.aiDelay = 40 + Math.floor(Math.random() * 30); // ~0.7-1.2s "thinking" time
+}
+
+function updateAi() {
+  if (!isAiTurn() || game.state !== 'INPUT') return;
+
+  game.aiDelay--;
+  if (game.aiDelay > 0) return;
+
+  const shot = aiCalculateShot();
+  game.angle = shot.angle;
+  game.velocity = shot.velocity;
+  startThrow();
+}
+
+// --- Throw Logic ---
+function startThrow() {
+  const p = game.players[game.turn];
+
+  let angleRad;
+  if (game.turn === 0) {
+    angleRad = game.angle * Math.PI / 180;
+  } else {
+    angleRad = (180 - game.angle) * Math.PI / 180;
+  }
+
+  const speed = game.velocity;
+  game.banana.vx = Math.cos(angleRad) * speed;
+  game.banana.vy = -Math.sin(angleRad) * speed;
+  game.banana.startX = p.x;
+  game.banana.startY = p.y - GORILLA_H - 5;
+  game.banana.x = game.banana.startX;
+  game.banana.y = game.banana.startY;
+  game.banana.t = 0;
+  game.banana.active = true;
+  game.sunShocked = false;
+
+  // Throwing arm is drawn as an overlay in the THROWING state,
+  // so the scene buffer keeps idle gorillas and preserves building destruction.
+  game.throwArm = game.turn === 0 ? 2 : 1;
+
+  game.state = 'THROWING';
+  playThrowSound();
+}
+
+// --- Physics ---
+function updateBanana() {
+  const b = game.banana;
+  if (!b.active) return;
+
+  b.t += 0.2;
+
+  const windEffect = game.wind / 5;
+  b.x = b.startX + (b.vx * b.t) + (0.5 * windEffect * b.t * b.t);
+  b.y = b.startY + (b.vy * b.t) + (0.5 * game.gravity * b.t * b.t);
+
+  // Sun reaction
+  const distToSun = Math.sqrt((b.x - game.sunX) ** 2 + (b.y - game.sunY) ** 2);
+  game.sunShocked = distToSun < 40;
+
+  // Off-screen check
+  if (b.x < -30 || b.x > W + 30 || b.y > H + 30) {
+    b.active = false;
+    game.sunShocked = false;
+    switchTurn();
+    return;
+  }
+
+  // Collision: first check gorilla bounding boxes, then scene buffer for buildings
+  if (b.x >= 0 && b.x < W && b.y >= 0 && b.y < H) {
+    // Check gorilla hit (bounding box, not pixel)
+    const hitG = hitTestGorilla(b.x, b.y);
+    if (hitG >= 0) {
+      b.active = false;
+      game.sunShocked = false;
+      startExplosion(b.x, b.y, hitG);
+      return;
+    }
+
+    // Check building hit via scene pixel (scene has no gorillas, just sky + buildings)
+    const checkPoints = [
+      [b.x, b.y],
+      [b.x - 2, b.y], [b.x + 2, b.y],
+      [b.x, b.y - 2], [b.x, b.y + 2],
+    ];
+    for (const [cx, cy] of checkPoints) {
+      const c = getScenePixel(cx, cy);
+      if (!c) continue;
+      if (!rgbMatch(c, SKY_RGB)) {
+        b.active = false;
+        game.sunShocked = false;
+        startExplosion(b.x, b.y, -1);
+        return;
+      }
+    }
+  }
+}
+
+// --- Explosion ---
+function startExplosion(x, y, hitPlayer) {
+  game.explosion.active = true;
+  game.explosion.x = x;
+  game.explosion.y = y;
+  game.explosion.maxRadius = hitPlayer >= 0 ? 40 : 25;
+  game.explosion.frame = 0;
+  game.explosion.hitPlayer = hitPlayer;
+  game.state = 'EXPLODING';
+
+  if (hitPlayer >= 0) {
+    playGorillaHitSound();
+  } else {
+    playBuildingHitSound();
+  }
+}
+
+function drawSceneWithGorillas() {
+  restoreScene();
+  drawGorilla(game.players[0].x, game.players[0].y, 0);
+  drawGorilla(game.players[1].x, game.players[1].y, 0);
+}
+
+function updateExplosion() {
+  const e = game.explosion;
+  if (!e.active) return;
+
+  e.frame++;
+
+  if (e.frame <= 15) {
+    const radius = Math.round((e.frame / 15) * e.maxRadius);
+    drawSceneWithGorillas();
+    fillCircle(e.x, e.y, radius, C.EXPLOSION);
+    drawOverlays();
+  } else if (e.frame === 16) {
+    // Destroy building: clear area in scene buffer
+    clearSceneCircle(e.x, e.y, e.maxRadius);
+    drawSceneWithGorillas();
+    drawOverlays();
+  } else if (e.frame > 25) {
+    e.active = false;
+
+    if (e.hitPlayer >= 0) {
+      if (e.hitPlayer === game.turn) {
+        game.players[1 - game.turn].score++;
+      } else {
+        game.players[game.turn].score++;
+      }
+      const scorer = e.hitPlayer === game.turn ? (1 - game.turn) : game.turn;
+      game.state = 'CELEBRATE';
+      game.celebrate.active = true;
+      game.celebrate.frame = 0;
+      game.celebrate.winner = scorer;
+      playVictorySound();
+    } else {
+      switchTurn();
+    }
+  } else {
+    drawSceneWithGorillas();
+    drawOverlays();
+  }
+}
+
+// --- Turn Switching ---
+function switchTurn() {
+  game.turn = 1 - game.turn;
+  game.inputField = 'angle';
+  game.inputBuffer = '';
+  game.sunShocked = false;
+  game.state = 'INPUT';
+  // If building was hit (not gorilla), AI miss count goes up
+  if (isAiTurn()) {
+    game.aiMissCount++;
+    startAiTurn();
+  }
+}
+
+// --- Celebration ---
+function updateCelebrate() {
+  if (!game.celebrate.active) return;
+  game.celebrate.frame++;
+
+  if (game.celebrate.frame > game.celebrate.totalFrames) {
+    game.celebrate.active = false;
+    const winner = game.celebrate.winner;
+    if (game.players[winner].score >= game.targetScore) {
+      game.state = 'GAME_OVER';
+      game.gameOver.active = true;
+      game.gameOver.winner = winner;
+      game.titleFrame = 0;
+    } else {
+      startNewRound();
+    }
+  }
+}
+
+function drawCelebration() {
+  if (!game.celebrate.active) return;
+  const winner = game.celebrate.winner;
+  const armCycle = [1, 2, 3, 2];
+  const armState = armCycle[Math.floor(game.celebrate.frame / 8) % armCycle.length];
+
+  restoreScene();
+  // Draw winner with animated arms, don't draw loser (they were hit)
+  drawGorilla(game.players[winner].x, game.players[winner].y, armState);
+  drawOverlays();
+
+  const msg = game.players[winner].name.toUpperCase() + ' SCORES!';
+  drawTextCentered(msg, H / 2 - 20, C.SUN_YELLOW, 2);
+}
+
+// --- Round Management ---
+function startNewRound() {
+  game.buildings = generateBuildings();
+  game.wind = generateWind();
+  game.turn = 0; // Player 1 always throws first
+  game.inputField = 'angle';
+  game.inputBuffer = '';
+  game.sunShocked = false;
+  game.banana.active = false;
+  game.explosion.active = false;
+  game.celebrate.active = false;
+  game.aiMissCount = 0;
+
+  placeGorillas(game.buildings);
+  drawPlayfield();
+  saveScene();
+  game.state = 'INPUT';
+}
+
+function startNewGame() {
+  game.players[0].score = 0;
+  game.players[1].score = 0;
+  game.gameOver.active = false;
+  startNewRound();
+}
+
+// --- Input Prompt ---
+function drawInputPrompt() {
+  const p = game.players[game.turn];
+  const promptX = game.turn === 0 ? 10 : W - 190;
+  const promptY = 20;
+
+  drawText(p.name.toUpperCase() + "'S TURN", promptX, promptY, C.WHITE, 1);
+
+  if (game.inputField === 'angle') {
+    drawText('ANGLE: ' + game.inputBuffer, promptX, promptY + 12, C.WHITE, 1);
+    game.cursorTimer++;
+    if (game.cursorTimer % 30 < 15) {
+      const curX = promptX + textWidth('ANGLE: ' + game.inputBuffer, 1) + 2;
+      fillRect(curX, promptY + 12, 4, 7, C.WHITE);
+    }
+  } else {
+    drawText('ANGLE: ' + game.angle, promptX, promptY + 12, C.WHITE, 1);
+    drawText('VELOCITY: ' + game.inputBuffer, promptX, promptY + 24, C.WHITE, 1);
+    game.cursorTimer++;
+    if (game.cursorTimer % 30 < 15) {
+      const curX = promptX + textWidth('VELOCITY: ' + game.inputBuffer, 1) + 2;
+      fillRect(curX, promptY + 24, 4, 7, C.WHITE);
+    }
+  }
+}
+
+// --- Title Screen ---
+function drawTitleScreen() {
+  clearToSky();
+  game.titleFrame++;
+
+  // Decorative buildings at bottom
+  for (let i = 0; i < 11; i++) {
+    const bx = i * 60;
+    const bh = 50 + Math.sin(i * 1.3 + 0.5) * 25;
+    const colors = [C.BLDG_GREY, C.BLDG_RED, C.BLDG_CYAN];
+    fillRect(bx, H - bh, 58, bh, colors[i % 3]);
+    // A few windows
+    for (let wy = H - bh + 5; wy + 7 < H - 2; wy += 15) {
+      for (let wx = bx + 3; wx + 4 < bx + 56; wx += 10) {
+        if (Math.sin(wx * 7 + wy * 3) > 0) fillRect(wx, wy, 4, 7, C.WIN_LIT);
+      }
+    }
+  }
+
+  // Gorillas on buildings
+  drawGorilla(160, H - 70, Math.floor(game.titleFrame / 15) % 3);
+  drawGorilla(480, H - 55, Math.floor((game.titleFrame + 8) / 15) % 3);
+
+  // Title text
+  drawTextCentered('G O R I L L A . B A S', 30, C.SUN_YELLOW, 3);
+  drawTextCentered('CANVAS EDITION', 65, C.WHITE, 2);
+
+  // Sun
+  drawSun(false);
+
+  if (Math.floor(game.titleFrame / 30) % 2 === 0) {
+    drawTextCentered('PRESS ANY KEY TO START', 200, C.WHITE, 1);
+  }
+
+  drawTextCentered('BASED ON THE 1991 QBASIC CLASSIC', 230, C.BLDG_GREY, 1);
+  drawTextCentered('BY MICROSOFT', 245, C.BLDG_GREY, 1);
+  drawTextCentered('ESC TO QUIT AT ANY TIME', 270, '#444488', 1);
+}
+
+// --- Setup Screen ---
+function drawSetupScreen() {
+  clearToSky();
+  drawTextCentered('GAME SETUP', 30, C.SUN_YELLOW, 2);
+
+  const labels = ['NUMBER OF PLAYERS (1 OR 2):', 'PLAYER 1 NAME:', 'PLAYER 2 NAME:', 'POINTS TO WIN:'];
+  const startY = 70;
+
+  for (let i = 0; i < 4; i++) {
+    // Skip player 2 name in 1P mode
+    if (i === 2 && game.numPlayers === 1 && game.setupField > 2) continue;
+    if (i === 2 && game.numPlayers === 1 && game.setupField <= 1) continue;
+
+    const y = startY + i * 40;
+    drawText(labels[i], 80, y, C.WHITE, 1);
+
+    if (i === game.setupField) {
+      drawText(game.setupBuffer, 80, y + 12, C.SUN_YELLOW, 1);
+      game.cursorTimer++;
+      if (game.cursorTimer % 30 < 15) {
+        const curX = 80 + textWidth(game.setupBuffer, 1) + 2;
+        fillRect(curX, y + 12, 4, 7, C.SUN_YELLOW);
+      }
+    } else if (i < game.setupField) {
+      drawText(game.setupValues[i], 80, y + 12, C.BLDG_GREY, 1);
+    } else {
+      drawText(game.setupValues[i], 80, y + 12, '#444488', 1);
+    }
+  }
+
+  drawTextCentered('PRESS ENTER TO CONFIRM EACH FIELD', 300, C.BLDG_GREY, 1);
+}
+
+// --- Game Over Screen ---
+function drawGameOverScreen() {
+  game.titleFrame++;
+
+  // Draw once then overlay
+  if (game.titleFrame === 1) {
+    restoreScene();
+    drawOverlays();
+  }
+
+  // Semi-transparent overlay (only draw once to avoid stacking)
+  if (game.titleFrame === 2) {
+    ctx.fillStyle = 'rgba(0, 0, 80, 0.75)';
+    ctx.fillRect(0, 0, W, H);
+    game.gameOverSnapshot = ctx.getImageData(0, 0, W, H);
+  }
+
+  if (game.titleFrame >= 2) {
+    if (game.gameOverSnapshot) ctx.putImageData(game.gameOverSnapshot, 0, 0);
+
+    const winner = game.players[game.gameOver.winner];
+    drawTextCentered('GAME OVER!', 80, C.EXPLOSION, 3);
+    drawTextCentered(winner.name.toUpperCase() + ' WINS!', 120, C.SUN_YELLOW, 2);
+
+    const s1 = game.players[0].name + ': ' + game.players[0].score;
+    const s2 = game.players[1].name + ': ' + game.players[1].score;
+    drawTextCentered(s1 + '   ' + s2, 170, C.WHITE, 1);
+
+    if (Math.floor(game.titleFrame / 30) % 2 === 0) {
+      drawTextCentered('PLAY AGAIN? (Y/N)', 220, C.WHITE, 1);
+    }
+  }
+}
+
+// --- Main Game Loop ---
+function gameLoop() {
+  switch (game.state) {
+    case 'TITLE':
+      drawTitleScreen();
+      break;
+
+    case 'SETUP':
+      drawSetupScreen();
+      break;
+
+    case 'INPUT':
+      updateAi(); // no-op if not AI's turn
+      restoreScene();
+      drawGorilla(game.players[0].x, game.players[0].y, 0);
+      drawGorilla(game.players[1].x, game.players[1].y, 0);
+      drawOverlays();
+      if (isAiTurn()) {
+        // Show "Computer is thinking..." instead of input prompt
+        const promptX = W - 190;
+        drawText('COMPUTER', promptX, 20, C.WHITE, 1);
+        if (Math.floor(game.cursorTimer / 15) % 2 === 0) {
+          drawText('THINKING...', promptX, 32, C.SUN_YELLOW, 1);
+        }
+        game.cursorTimer++;
+      } else {
+        drawInputPrompt();
+      }
+      break;
+
+    case 'THROWING':
+      updateBanana();
+      if (game.state === 'THROWING' && game.banana.active) {
+        restoreScene();
+        // Draw both gorillas - thrower has raised arm
+        for (let i = 0; i < 2; i++) {
+          const arm = (i === game.turn) ? game.throwArm : 0;
+          drawGorilla(game.players[i].x, game.players[i].y, arm);
+        }
+        drawSun(game.sunShocked);
+        drawScoreboard();
+        drawWindArrow();
+        const rot = Math.floor(game.banana.t * 5) % 4;
+        drawBanana(game.banana.x, game.banana.y, rot);
+      }
+      break;
+
+    case 'EXPLODING':
+      updateExplosion();
+      break;
+
+    case 'CELEBRATE':
+      drawCelebration();
+      updateCelebrate();
+      break;
+
+    case 'GAME_OVER':
+      drawGameOverScreen();
+      break;
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+// --- Start ---
+requestAnimationFrame(gameLoop);
+
+</script>
+</body>
+</html>
