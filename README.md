@@ -15,6 +15,7 @@ A faithful recreation of the classic QBasic GORILLA.BAS (1991) as a single self-
 - Built-in 5x7 bitmap font
 - Sun reacts when the banana flies near
 - Victory dance animation
+- Mobile support with on-screen number pad (auto-detected on touch devices)
 - Zero dependencies, single HTML file
 
 ## How to Play
@@ -31,6 +32,21 @@ A faithful recreation of the classic QBasic GORILLA.BAS (1991) as a single self-
 - **Enter**: Confirm input
 - **Backspace**: Delete input
 - **Escape**: Quit to title screen
+
+## Differences from the Original
+
+The core game mechanics (trajectory physics, building generation, wind, scoring) are faithful to the 1991 QBasic original, but collision detection differs slightly:
+
+| | Original GORILLA.BAS | Canvas Edition |
+|---|---|---|
+| **Hit detection** | Pixel-color sampling (`POINT()`) — banana must overlap an actual gorilla-colored pixel | Bounding-box — 26x28 rectangle around the gorilla |
+| **Probe points** | 2 points (leading edge + diagonal offset) | 5 points for buildings, 1 point for gorilla |
+| **Near-miss tolerance** | Zero — pixel-perfect, no splash damage | More forgiving (full rectangle including empty corners) |
+| **Building explosion radius** | 7 pixels | 25 pixels |
+| **Gorilla explosion radius** | 48 pixels | 40 pixels |
+| **Floor destruction** | Gorilla floats (no gravity) | Same — gorilla floats |
+
+Both versions have no splash damage: a near-miss that destroys the building next to a gorilla does not count as a hit. Both versions allow gorillas to float in mid-air if the building beneath them is destroyed — there is no falling/gravity code in the original.
 
 ## About
 

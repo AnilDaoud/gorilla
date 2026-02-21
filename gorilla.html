@@ -17,12 +17,57 @@ canvas {
 .src { margin-top: 4px; text-align: right; font-family: monospace; font-size: 12px; }
 .src a { color: #555; text-decoration: none; }
 .src a:hover { color: #aaa; }
+#numpad {
+  display: none;
+  grid-template-columns: repeat(4, 1fr);
+  background: #111;
+  padding: 6px;
+  gap: 4px;
+  width: 100%;
+  margin-top: 4px;
+}
+.np-btn {
+  font-family: monospace;
+  font-size: 18px;
+  min-height: 48px;
+  background: #333;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  user-select: none;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+.np-btn:active { background: #555; }
+.np-wide { grid-column: span 2; }
+@media (orientation: landscape) and (max-height: 500px) {
+  .np-btn { min-height: 32px; font-size: 14px; }
+  #numpad { padding: 3px; gap: 2px; }
+}
 </style>
 </head>
 <body>
 <div class="wrap">
   <canvas id="game" width="640" height="350"></canvas>
   <div class="src"><a href="https://github.com/AnilDaoud/gorilla">source</a></div>
+  <div id="numpad">
+    <button class="np-btn" data-key="1">1</button>
+    <button class="np-btn" data-key="2">2</button>
+    <button class="np-btn" data-key="3">3</button>
+    <button class="np-btn" data-key="Backspace">Del</button>
+    <button class="np-btn" data-key="4">4</button>
+    <button class="np-btn" data-key="5">5</button>
+    <button class="np-btn" data-key="6">6</button>
+    <button class="np-btn" data-key="Escape">Esc</button>
+    <button class="np-btn" data-key="7">7</button>
+    <button class="np-btn" data-key="8">8</button>
+    <button class="np-btn" data-key="9">9</button>
+    <button class="np-btn" data-key=".">.</button>
+    <button class="np-btn" data-key="y">Y</button>
+    <button class="np-btn" data-key="0">0</button>
+    <button class="np-btn" data-key="n">N</button>
+    <button class="np-btn" data-key="Enter">Go</button>
+  </div>
 </div>
 <script>
 // ============================================================
@@ -39,15 +84,54 @@ const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const W = 640, H = 350;
 ctx.imageSmoothingEnabled = false;
 
+const numpadEl = document.getElementById('numpad');
+const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+if (isTouchDevice) {
+  numpadEl.style.display = 'grid';
+  document.body.style.justifyContent = 'flex-start';
+}
+
 function autoScale() {
-  const sx = Math.floor(window.innerWidth / W) || 1;
-  const sy = Math.floor(window.innerHeight / H) || 1;
-  const s = Math.min(sx, sy);
-  canvas.style.width = (W * s) + 'px';
-  canvas.style.height = (H * s) + 'px';
+  const padH = numpadEl.offsetHeight || 0;
+  const availH = window.innerHeight - padH - 20; // 20 = src link + margins
+
+  if (isTouchDevice) {
+    const s = Math.min(window.innerWidth / W, availH / H);
+    const cw = Math.floor(W * s);
+    const ch = Math.floor(H * s);
+    canvas.style.width = cw + 'px';
+    canvas.style.height = ch + 'px';
+    numpadEl.style.maxWidth = cw + 'px';
+  } else {
+    const sx = Math.floor(window.innerWidth / W) || 1;
+    const sy = Math.floor(window.innerHeight / H) || 1;
+    const s = Math.min(sx, sy);
+    canvas.style.width = (W * s) + 'px';
+    canvas.style.height = (H * s) + 'px';
+  }
 }
 autoScale();
 window.addEventListener('resize', autoScale);
+
+function simulateKey(key) {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true }));
+}
+
+numpadEl.addEventListener('touchstart', function(e) {
+  const btn = e.target.closest('.np-btn');
+  if (!btn) return;
+  e.preventDefault();
+  ensureAudio();
+  simulateKey(btn.dataset.key);
+}, { passive: false });
+
+numpadEl.addEventListener('click', function(e) {
+  const btn = e.target.closest('.np-btn');
+  if (!btn) return;
+  ensureAudio();
+  simulateKey(btn.dataset.key);
+});
 
 // --- EGA Color Palette ---
 const C = {
