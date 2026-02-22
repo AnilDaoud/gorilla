@@ -41,6 +41,14 @@ canvas {
 .np-btn:active { background: #555; }
 .np-wide { grid-column: span 2; }
 @media (orientation: landscape) and (max-height: 500px) {
+  .wrap.landscape { flex-direction: row; align-items: center; }
+  .wrap.landscape #numpad {
+    margin-top: 0;
+    margin-left: 4px;
+    width: 156px;
+    flex-shrink: 0;
+  }
+  .wrap.landscape .src { display: none; }
   .np-btn { min-height: 32px; font-size: 14px; }
   #numpad { padding: 3px; gap: 2px; }
 }
@@ -87,22 +95,42 @@ ctx.imageSmoothingEnabled = false;
 const numpadEl = document.getElementById('numpad');
 const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
+const wrapEl = document.querySelector('.wrap');
+
 if (isTouchDevice) {
   numpadEl.style.display = 'grid';
   document.body.style.justifyContent = 'flex-start';
 }
 
+function isLandscape() {
+  return isTouchDevice && window.innerWidth > window.innerHeight && window.innerHeight <= 500;
+}
+
 function autoScale() {
-  const padH = numpadEl.offsetHeight || 0;
-  const availH = window.innerHeight - padH - 20; // 20 = src link + margins
+  const landscape = isLandscape();
+  wrapEl.classList.toggle('landscape', landscape);
 
   if (isTouchDevice) {
-    const s = Math.min(window.innerWidth / W, availH / H);
-    const cw = Math.floor(W * s);
-    const ch = Math.floor(H * s);
-    canvas.style.width = cw + 'px';
-    canvas.style.height = ch + 'px';
-    numpadEl.style.maxWidth = cw + 'px';
+    if (landscape) {
+      // Numpad beside canvas — subtract its fixed width + margin
+      const availW = window.innerWidth - 160; // 156px pad + 4px margin
+      const s = Math.min(availW / W, window.innerHeight / H);
+      const cw = Math.floor(W * s);
+      const ch = Math.floor(H * s);
+      canvas.style.width = cw + 'px';
+      canvas.style.height = ch + 'px';
+      numpadEl.style.maxWidth = '';
+    } else {
+      // Numpad below canvas — subtract its height
+      const padH = numpadEl.offsetHeight || 0;
+      const availH = window.innerHeight - padH - 20;
+      const s = Math.min(window.innerWidth / W, availH / H);
+      const cw = Math.floor(W * s);
+      const ch = Math.floor(H * s);
+      canvas.style.width = cw + 'px';
+      canvas.style.height = ch + 'px';
+      numpadEl.style.maxWidth = cw + 'px';
+    }
   } else {
     const sx = Math.floor(window.innerWidth / W) || 1;
     const sy = Math.floor(window.innerHeight / H) || 1;
