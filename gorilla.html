@@ -904,10 +904,40 @@ function startThrow() {
 }
 
 // --- Physics ---
+
+// Test a single point for collision. Returns true if hit (and triggers explosion).
+function checkCollisionAt(px, py) {
+  if (px < 0 || px >= W || py < 0 || py >= H) return false;
+  const b = game.banana;
+
+  const hitG = hitTestGorilla(px, py);
+  if (hitG >= 0) {
+    b.active = false;
+    game.sunShocked = false;
+    startExplosion(px, py, hitG);
+    return true;
+  }
+
+  const s = COLLISION_SPREAD;
+  const probes = [[px, py], [px - s, py], [px + s, py], [px, py - s], [px, py + s]];
+  for (const [cx, cy] of probes) {
+    const c = getScenePixel(cx, cy);
+    if (!c) continue;
+    if (!rgbMatch(c, SKY_RGB)) {
+      b.active = false;
+      game.sunShocked = false;
+      startExplosion(px, py, -1);
+      return true;
+    }
+  }
+  return false;
+}
+
 function updateBanana() {
   const b = game.banana;
   if (!b.active) return;
 
+  const prevX = b.x, prevY = b.y;
   b.t += PHYSICS_DT;
 
   const windEffect = game.wind / WIND_DIVISOR;
@@ -926,34 +956,15 @@ function updateBanana() {
     return;
   }
 
-  // Collision: first check gorilla bounding boxes, then scene buffer for buildings
-  if (b.x >= 0 && b.x < W && b.y >= 0 && b.y < H) {
-    // Check gorilla hit (bounding box, not pixel)
-    const hitG = hitTestGorilla(b.x, b.y);
-    if (hitG >= 0) {
-      b.active = false;
-      game.sunShocked = false;
-      startExplosion(b.x, b.y, hitG);
-      return;
-    }
-
-    // Check building hit via scene pixel (scene has no gorillas, just sky + buildings)
-    const s = COLLISION_SPREAD;
-    const checkPoints = [
-      [b.x, b.y],
-      [b.x - s, b.y], [b.x + s, b.y],
-      [b.x, b.y - s], [b.x, b.y + s],
-    ];
-    for (const [cx, cy] of checkPoints) {
-      const c = getScenePixel(cx, cy);
-      if (!c) continue;
-      if (!rgbMatch(c, SKY_RGB)) {
-        b.active = false;
-        game.sunShocked = false;
-        startExplosion(b.x, b.y, -1);
-        return;
-      }
-    }
+  // Subdivide collision check along travel path to prevent tunneling
+  const dx = b.x - prevX, dy = b.y - prevY;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const steps = Math.max(1, Math.ceil(dist / GORILLA_W));
+  for (let i = 1; i <= steps; i++) {
+    const frac = i / steps;
+    const cx = prevX + dx * frac;
+    const cy = prevY + dy * frac;
+    if (checkCollisionAt(cx, cy)) return;
   }
 }
 
