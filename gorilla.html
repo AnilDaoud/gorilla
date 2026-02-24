@@ -782,6 +782,9 @@ function handleSetupInput(e) {
   } else if (e.key === 'Backspace') {
     game.setupBuffer = game.setupBuffer.slice(0, -1);
   } else if (e.key.length === 1 && game.setupBuffer.length < 16) {
+    // Fields 0 (num players) and 3 (target score) are numeric only
+    const numericField = game.setupField === 0 || game.setupField === 3;
+    if (numericField && !(e.key >= '0' && e.key <= '9')) return;
     game.setupBuffer += e.key;
   }
 }
