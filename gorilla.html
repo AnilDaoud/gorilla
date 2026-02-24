@@ -109,6 +109,8 @@ const AI_DELAY_RANGE = 30;         // random additional frames
 const AI_ERROR_START = 0.35;       // initial AI inaccuracy
 const AI_ERROR_MIN = 0.05;         // best AI accuracy after learning
 const AI_ERROR_STEP = 0.05;        // accuracy improvement per miss
+const SUN_X = W / 2;              // sun position
+const SUN_Y = 20;
 
 const numpadEl = document.getElementById('numpad');
 const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -327,6 +329,14 @@ function fillCircle(cx, cy, r, color) {
   ctx.fill();
 }
 
+function strokeArc(cx, cy, r, startAngle, endAngle, color, lineWidth) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth || 1;
+  ctx.beginPath();
+  ctx.arc(Math.round(cx), Math.round(cy), r, startAngle, endAngle);
+  ctx.stroke();
+}
+
 function clearToSky() {
   fillRect(0, 0, W, H, C.SKY);
 }
@@ -445,13 +455,9 @@ const game = {
     { name: 'Player 2', score: 0, x: 0, y: 0, buildingIdx: 0 },
   ],
   targetScore: 3,
-  gravity: GRAVITY,
   wind: 0,
   turn: 0,
   buildings: [],
-
-  // Sun
-  sunX: W / 2, sunY: 20,
   sunShocked: false,
 
   // Input
@@ -468,7 +474,7 @@ const game = {
   explosion: { active: false, x: 0, y: 0, maxRadius: 0, frame: 0, hitPlayer: -1 },
 
   // Celebration
-  celebrate: { active: false, frame: 0, totalFrames: CELEBRATE_FRAMES, winner: -1 },
+  celebrate: { active: false, frame: 0, winner: -1 },
 
   // Game over
   gameOver: { active: false, winner: -1 },
@@ -539,22 +545,15 @@ function drawBuildings(buildings) {
 
 // --- Sun ---
 function drawSun(shocked) {
-  const cx = game.sunX, cy = game.sunY;
+  const cx = SUN_X, cy = SUN_Y;
   fillCircle(cx, cy, 16, C.SUN_YELLOW);
-  // Eyes
-  fillRect(cx - 6, cy - 5, 3, 4, C.BLACK);
-  fillRect(cx + 4, cy - 5, 3, 4, C.BLACK);
+  fillRect(cx - 6, cy - 5, 3, 4, C.BLACK);   // left eye
+  fillRect(cx + 4, cy - 5, 3, 4, C.BLACK);   // right eye
   if (shocked) {
-    ctx.fillStyle = C.BLACK;
-    ctx.beginPath(); ctx.arc(cx, cy + 6, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = C.SUN_YELLOW;
-    ctx.beginPath(); ctx.arc(cx, cy + 6, 2, 0, Math.PI * 2); ctx.fill();
+    fillCircle(cx, cy + 6, 4, C.BLACK);       // open mouth
+    fillCircle(cx, cy + 6, 2, C.SUN_YELLOW);  // mouth hole
   } else {
-    ctx.strokeStyle = C.BLACK;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(cx, cy + 2, 7, 0.2, Math.PI - 0.2);
-    ctx.stroke();
+    strokeArc(cx, cy + 2, 7, 0.2, Math.PI - 0.2, C.BLACK);  // smile
   }
 }
 
@@ -812,7 +811,8 @@ function isAiTurn() {
 }
 
 function aiCalculateShot() {
-  // AI is player 1 (index 1), target is player 0
+  // Pick a random loft angle, then brute-force search for the velocity that
+  // lands closest to the target. Add error that shrinks as the AI misses.
   const me = game.players[1];
   const target = game.players[0];
   const sx = me.x;
@@ -820,42 +820,11 @@ function aiCalculateShot() {
   const tx = target.x;
   const ty = target.y - GORILLA_H / 2;
 
-  const dx = sx - tx; // positive because AI is on the right, throwing left
-  const dy = ty - sy; // positive if target is below
-
-  // Pick a loft angle (50-75 degrees works well for arcing shots)
   const baseAngle = 55 + Math.random() * 20;
   const angleRad = baseAngle * Math.PI / 180;
-
-  // For player 2, angle is mirrored: angleRad maps to (180 - angle) internally.
-  // We need to solve for velocity given angle.
-  // Using the trajectory equations for player 2:
-  //   finalAngleRad = (180 - angle) * PI / 180
-  //   vx = cos(finalAngleRad) * v  (negative, going left)
-  //   vy = -sin(finalAngleRad) * v  (negative, going up)
-  //
-  // At landing: tx = sx + vx*t + 0.5*(wind/5)*t^2
-  //             ty = sy + vy*t + 0.5*g*t^2
-  //
-  // Solve for v using x equation and a reasonable flight time.
-  // Estimate flight time from y equation: t ≈ 2*v*sin(angle)/g
-  // Then: dx = -cos(angle)*v*t + 0.5*(wind/5)*t^2
-
-  // Simpler approach: iterate to find a good velocity
   const windEffect = game.wind / WIND_DIVISOR;
   const cosA = Math.cos(angleRad);
   const sinA = Math.sin(angleRad);
-
-  // Player 2's internal conversion: vx = cos(180-angle)*v = -cos(angle)*v
-  // vy = -sin(180-angle)*v = -sin(angle)*v
-  // x(t) = sx + (-cosA*v)*t + 0.5*windEffect*t^2
-  // y(t) = sy + (-sinA*v)*t + 0.5*g*t^2
-  //
-  // We want x(t) = tx → dx = sx - tx = cosA*v*t - 0.5*windEffect*t^2
-  // We want y(t) = ty → dy = ty - sy = -sinA*v*t + 0.5*g*t^2
-  //
-  // From y: t = (sinA*v ± sqrt(sinA^2*v^2 - 2*g*dy)) / g
-  // Let's just binary search for v.
 
   let bestV = 60;
   let bestDist = Infinity;
@@ -866,7 +835,7 @@ function aiCalculateShot() {
     let hitX = sx, hitY = sy;
     for (let t = PHYSICS_DT; t < 50; t += PHYSICS_DT) {
       hitX = sx + vxSim * t + 0.5 * windEffect * t * t;
-      hitY = sy + vySim * t + 0.5 * game.gravity * t * t;
+      hitY = sy + vySim * t + 0.5 * GRAVITY * t * t;
       if (hitY >= ty) break;
       if (hitX < -OFF_SCREEN_MARGIN) break;
     }
@@ -943,10 +912,10 @@ function updateBanana() {
 
   const windEffect = game.wind / WIND_DIVISOR;
   b.x = b.startX + (b.vx * b.t) + (0.5 * windEffect * b.t * b.t);
-  b.y = b.startY + (b.vy * b.t) + (0.5 * game.gravity * b.t * b.t);
+  b.y = b.startY + (b.vy * b.t) + (0.5 * GRAVITY * b.t * b.t);
 
   // Sun reaction
-  const distToSun = Math.sqrt((b.x - game.sunX) ** 2 + (b.y - game.sunY) ** 2);
+  const distToSun = Math.sqrt((b.x - SUN_X) ** 2 + (b.y - SUN_Y) ** 2);
   game.sunShocked = distToSun < SUN_SHOCK_DIST;
 
   // Off-screen check
@@ -1070,7 +1039,7 @@ function updateCelebrate() {
   if (!game.celebrate.active) return;
   game.celebrate.frame++;
 
-  if (game.celebrate.frame > game.celebrate.totalFrames) {
+  if (game.celebrate.frame > CELEBRATE_FRAMES) {
     game.celebrate.active = false;
     const winner = game.celebrate.winner;
     if (game.players[winner].score >= game.targetScore) {
