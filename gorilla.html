@@ -56,7 +56,7 @@ canvas {
 </head>
 <body>
 <div class="wrap">
-  <canvas id="game" width="640" height="350"></canvas>
+  <canvas id="game" width="640" height="350" aria-label="GORILLA.BAS game canvas"></canvas>
   <div class="src"><a href="https://github.com/AnilDaoud/gorilla">source</a></div>
   <div id="numpad">
     <button class="np-btn" data-key="1">1</button>
@@ -91,6 +91,24 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const W = 640, H = 350;
 ctx.imageSmoothingEnabled = false;
+
+// --- Game Constants ---
+const PHYSICS_DT = 0.2;            // time step per game tick
+const WIND_DIVISOR = 5;            // wind force scaling
+const GRAVITY = 9.8;
+const BANANA_LAUNCH_OFFSET = 5;    // pixels above gorilla head
+const COLLISION_SPREAD = 2;        // px offset for building hit probes
+const OFF_SCREEN_MARGIN = 30;      // px beyond edges before banana is "gone"
+const SUN_SHOCK_DIST = 40;         // banana proximity to trigger shocked sun
+const EXPLODE_GORILLA = 40;        // explosion radius for gorilla hits
+const EXPLODE_BUILDING = 25;       // explosion radius for building hits
+const EXPLODE_ANIM_FRAMES = 15;    // frames for explosion to expand
+const CELEBRATE_FRAMES = 120;      // frames for victory dance (~2s at 60fps)
+const AI_DELAY_MIN = 40;           // min "thinking" frames
+const AI_DELAY_RANGE = 30;         // random additional frames
+const AI_ERROR_START = 0.35;       // initial AI inaccuracy
+const AI_ERROR_MIN = 0.05;         // best AI accuracy after learning
+const AI_ERROR_STEP = 0.05;        // accuracy improvement per miss
 
 const numpadEl = document.getElementById('numpad');
 const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -175,6 +193,8 @@ const C = {
   BLDG_CYAN:  '#00AAAA',
   WIN_LIT:    '#FFFF55',
   WIND:       '#FF0055',
+  DIM_BLUE:   '#444488',
+  OVERLAY:    'rgba(0, 0, 80, 0.75)',
 };
 
 // Parse hex to RGB array (cached)
@@ -191,10 +211,14 @@ function hexToRgb(hex) {
 const SKY_RGB = hexToRgb(C.SKY);
 const GORILLA_RGB = hexToRgb(C.GORILLA);
 
+function darkenHex(hex, amount) {
+  const rgb = hexToRgb(hex);
+  return '#' + rgb.map(v => Math.max(0, v - amount).toString(16).padStart(2, '0')).join('');
+}
+
 // --- Bitmap Font (5x7) ---
 const FONT_W = 5, FONT_H = 7, FONT_SPACING = 1;
-const FONT_DATA = (function() {
-  const d = {
+const FONT_DATA = {
     'A': [0x04,0x0A,0x11,0x1F,0x11,0x11,0x11],
     'B': [0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E],
     'C': [0x0E,0x11,0x10,0x10,0x10,0x11,0x0E],
@@ -255,9 +279,7 @@ const FONT_DATA = (function() {
     '@': [0x0E,0x11,0x17,0x15,0x17,0x10,0x0E],
     '&': [0x0C,0x12,0x0C,0x0D,0x12,0x12,0x0D],
     '^': [0x04,0x0A,0x11,0x00,0x00,0x00,0x00],
-  };
-  return d;
-})();
+};
 
 function drawChar(ch, x, y, color, scale) {
   scale = scale || 1;
@@ -423,7 +445,7 @@ const game = {
     { name: 'Player 2', score: 0, x: 0, y: 0, buildingIdx: 0 },
   ],
   targetScore: 3,
-  gravity: 9.8,
+  gravity: GRAVITY,
   wind: 0,
   turn: 0,
   buildings: [],
@@ -446,10 +468,11 @@ const game = {
   explosion: { active: false, x: 0, y: 0, maxRadius: 0, frame: 0, hitPlayer: -1 },
 
   // Celebration
-  celebrate: { active: false, frame: 0, totalFrames: 120, winner: -1 },
+  celebrate: { active: false, frame: 0, totalFrames: CELEBRATE_FRAMES, winner: -1 },
 
   // Game over
   gameOver: { active: false, winner: -1 },
+  gameOverSnapshot: null,
 
   // Title/setup
   titleFrame: 0,
@@ -507,10 +530,7 @@ function drawBuildings(buildings) {
         if (Math.random() > 0.4) {
           fillRect(wx, wy, 4, 7, C.WIN_LIT);
         } else {
-          // Dark window - slightly darker than building
-          const rgb = hexToRgb(b.color);
-          const dark = '#' + rgb.map(v => Math.max(0, v - 60).toString(16).padStart(2, '0')).join('');
-          fillRect(wx, wy, 4, 7, dark);
+          fillRect(wx, wy, 4, 7, darkenHex(b.color, 60));
         }
       }
     }
@@ -698,6 +718,7 @@ document.addEventListener('keydown', function(e) {
 
   if (game.state === 'TITLE') {
     game.state = 'SETUP';
+    game.cursorTimer = 0;
     game.setupField = 0;
     // Fields: 0=numPlayers, 1=p1name, 2=p2name (skipped in 1P), 3=targetScore
     game.setupValues = ['' + game.numPlayers, game.players[0].name, game.players[1].name, '' + game.targetScore];
@@ -762,14 +783,14 @@ function handleGameInput(e) {
   if (e.key === 'Enter') {
     const val = parseFloat(game.inputBuffer);
     if (game.inputField === 'angle') {
-      if (!isNaN(val)) {
+      if (!isNaN(val) && val >= 0 && val <= 90) {
         game.angle = val;
         game.inputField = 'velocity';
         game.inputBuffer = '';
         playMenuBeep();
       }
     } else {
-      if (!isNaN(val) && val > 0) {
+      if (!isNaN(val) && val > 0 && val <= 200) {
         game.velocity = val;
         game.inputField = 'angle';
         game.inputBuffer = '';
@@ -778,7 +799,7 @@ function handleGameInput(e) {
     }
   } else if (e.key === 'Backspace') {
     game.inputBuffer = game.inputBuffer.slice(0, -1);
-  } else if ((e.key >= '0' && e.key <= '9') || e.key === '.' || e.key === '-') {
+  } else if ((e.key >= '0' && e.key <= '9') || e.key === '.') {
     if (game.inputBuffer.length < 8) {
       game.inputBuffer += e.key;
     }
@@ -795,7 +816,7 @@ function aiCalculateShot() {
   const me = game.players[1];
   const target = game.players[0];
   const sx = me.x;
-  const sy = me.y - GORILLA_H - 5;
+  const sy = me.y - GORILLA_H - BANANA_LAUNCH_OFFSET;
   const tx = target.x;
   const ty = target.y - GORILLA_H / 2;
 
@@ -821,7 +842,7 @@ function aiCalculateShot() {
   // Then: dx = -cos(angle)*v*t + 0.5*(wind/5)*t^2
 
   // Simpler approach: iterate to find a good velocity
-  const windEffect = game.wind / 5;
+  const windEffect = game.wind / WIND_DIVISOR;
   const cosA = Math.cos(angleRad);
   const sinA = Math.sin(angleRad);
 
@@ -843,11 +864,11 @@ function aiCalculateShot() {
     const vxSim = -cosA * v;
     const vySim = -sinA * v;
     let hitX = sx, hitY = sy;
-    for (let t = 0.2; t < 50; t += 0.2) {
+    for (let t = PHYSICS_DT; t < 50; t += PHYSICS_DT) {
       hitX = sx + vxSim * t + 0.5 * windEffect * t * t;
       hitY = sy + vySim * t + 0.5 * game.gravity * t * t;
       if (hitY >= ty) break;
-      if (hitX < -30) break;
+      if (hitX < -OFF_SCREEN_MARGIN) break;
     }
     const dist = Math.abs(hitX - tx);
     if (dist < bestDist) {
@@ -857,7 +878,7 @@ function aiCalculateShot() {
   }
 
   // Add error that decreases as AI misses more (it "learns")
-  const errorScale = Math.max(0.05, 0.35 - game.aiMissCount * 0.05);
+  const errorScale = Math.max(AI_ERROR_MIN, AI_ERROR_START - game.aiMissCount * AI_ERROR_STEP);
   const angleError = (Math.random() - 0.5) * 30 * errorScale;
   const velError = (Math.random() - 0.5) * bestV * 0.4 * errorScale;
 
@@ -868,7 +889,7 @@ function aiCalculateShot() {
 }
 
 function startAiTurn() {
-  game.aiDelay = 40 + Math.floor(Math.random() * 30); // ~0.7-1.2s "thinking" time
+  game.aiDelay = AI_DELAY_MIN + Math.floor(Math.random() * AI_DELAY_RANGE);
 }
 
 function updateAi() {
@@ -898,7 +919,7 @@ function startThrow() {
   game.banana.vx = Math.cos(angleRad) * speed;
   game.banana.vy = -Math.sin(angleRad) * speed;
   game.banana.startX = p.x;
-  game.banana.startY = p.y - GORILLA_H - 5;
+  game.banana.startY = p.y - GORILLA_H - BANANA_LAUNCH_OFFSET;
   game.banana.x = game.banana.startX;
   game.banana.y = game.banana.startY;
   game.banana.t = 0;
@@ -918,18 +939,18 @@ function updateBanana() {
   const b = game.banana;
   if (!b.active) return;
 
-  b.t += 0.2;
+  b.t += PHYSICS_DT;
 
-  const windEffect = game.wind / 5;
+  const windEffect = game.wind / WIND_DIVISOR;
   b.x = b.startX + (b.vx * b.t) + (0.5 * windEffect * b.t * b.t);
   b.y = b.startY + (b.vy * b.t) + (0.5 * game.gravity * b.t * b.t);
 
   // Sun reaction
   const distToSun = Math.sqrt((b.x - game.sunX) ** 2 + (b.y - game.sunY) ** 2);
-  game.sunShocked = distToSun < 40;
+  game.sunShocked = distToSun < SUN_SHOCK_DIST;
 
   // Off-screen check
-  if (b.x < -30 || b.x > W + 30 || b.y > H + 30) {
+  if (b.x < -OFF_SCREEN_MARGIN || b.x > W + OFF_SCREEN_MARGIN || b.y > H + OFF_SCREEN_MARGIN) {
     b.active = false;
     game.sunShocked = false;
     switchTurn();
@@ -948,10 +969,11 @@ function updateBanana() {
     }
 
     // Check building hit via scene pixel (scene has no gorillas, just sky + buildings)
+    const s = COLLISION_SPREAD;
     const checkPoints = [
       [b.x, b.y],
-      [b.x - 2, b.y], [b.x + 2, b.y],
-      [b.x, b.y - 2], [b.x, b.y + 2],
+      [b.x - s, b.y], [b.x + s, b.y],
+      [b.x, b.y - s], [b.x, b.y + s],
     ];
     for (const [cx, cy] of checkPoints) {
       const c = getScenePixel(cx, cy);
@@ -971,7 +993,7 @@ function startExplosion(x, y, hitPlayer) {
   game.explosion.active = true;
   game.explosion.x = x;
   game.explosion.y = y;
-  game.explosion.maxRadius = hitPlayer >= 0 ? 40 : 25;
+  game.explosion.maxRadius = hitPlayer >= 0 ? EXPLODE_GORILLA : EXPLODE_BUILDING;
   game.explosion.frame = 0;
   game.explosion.hitPlayer = hitPlayer;
   game.state = 'EXPLODING';
@@ -995,17 +1017,17 @@ function updateExplosion() {
 
   e.frame++;
 
-  if (e.frame <= 15) {
-    const radius = Math.round((e.frame / 15) * e.maxRadius);
+  if (e.frame <= EXPLODE_ANIM_FRAMES) {
+    const radius = Math.round((e.frame / EXPLODE_ANIM_FRAMES) * e.maxRadius);
     drawSceneWithGorillas();
     fillCircle(e.x, e.y, radius, C.EXPLOSION);
     drawOverlays();
-  } else if (e.frame === 16) {
+  } else if (e.frame === EXPLODE_ANIM_FRAMES + 1) {
     // Destroy building: clear area in scene buffer
     clearSceneCircle(e.x, e.y, e.maxRadius);
     drawSceneWithGorillas();
     drawOverlays();
-  } else if (e.frame > 25) {
+  } else if (e.frame > EXPLODE_ANIM_FRAMES + 10) {
     e.active = false;
 
     if (e.hitPlayer >= 0) {
@@ -1031,16 +1053,16 @@ function updateExplosion() {
 
 // --- Turn Switching ---
 function switchTurn() {
+  const prevWasAi = isAiTurn();
   game.turn = 1 - game.turn;
   game.inputField = 'angle';
   game.inputBuffer = '';
   game.sunShocked = false;
+  game.cursorTimer = 0;
   game.state = 'INPUT';
-  // If building was hit (not gorilla), AI miss count goes up
-  if (isAiTurn()) {
-    game.aiMissCount++;
-    startAiTurn();
-  }
+  // AI missed — it learns from its own failures
+  if (prevWasAi) game.aiMissCount++;
+  if (isAiTurn()) startAiTurn();
 }
 
 // --- Celebration ---
@@ -1093,6 +1115,7 @@ function startNewRound() {
   placeGorillas(game.buildings);
   drawPlayfield();
   saveScene();
+  game.cursorTimer = 0;
   game.state = 'INPUT';
 }
 
@@ -1112,18 +1135,18 @@ function drawInputPrompt() {
   drawText(p.name.toUpperCase() + "'S TURN", promptX, promptY, C.WHITE, 1);
 
   if (game.inputField === 'angle') {
-    drawText('ANGLE: ' + game.inputBuffer, promptX, promptY + 12, C.WHITE, 1);
+    drawText('ANGLE (0-90): ' + game.inputBuffer, promptX, promptY + 12, C.WHITE, 1);
     game.cursorTimer++;
     if (game.cursorTimer % 30 < 15) {
-      const curX = promptX + textWidth('ANGLE: ' + game.inputBuffer, 1) + 2;
+      const curX = promptX + textWidth('ANGLE (0-90): ' + game.inputBuffer, 1) + 2;
       fillRect(curX, promptY + 12, 4, 7, C.WHITE);
     }
   } else {
     drawText('ANGLE: ' + game.angle, promptX, promptY + 12, C.WHITE, 1);
-    drawText('VELOCITY: ' + game.inputBuffer, promptX, promptY + 24, C.WHITE, 1);
+    drawText('VELOCITY (1-200): ' + game.inputBuffer, promptX, promptY + 24, C.WHITE, 1);
     game.cursorTimer++;
     if (game.cursorTimer % 30 < 15) {
-      const curX = promptX + textWidth('VELOCITY: ' + game.inputBuffer, 1) + 2;
+      const curX = promptX + textWidth('VELOCITY (1-200): ' + game.inputBuffer, 1) + 2;
       fillRect(curX, promptY + 24, 4, 7, C.WHITE);
     }
   }
@@ -1165,7 +1188,7 @@ function drawTitleScreen() {
 
   drawTextCentered('BASED ON THE 1991 QBASIC CLASSIC', 230, C.BLDG_GREY, 1);
   drawTextCentered('BY MICROSOFT', 245, C.BLDG_GREY, 1);
-  drawTextCentered('ESC TO QUIT AT ANY TIME', 270, '#444488', 1);
+  drawTextCentered('ESC TO QUIT AT ANY TIME', 270, C.DIM_BLUE, 1);
 }
 
 // --- Setup Screen ---
@@ -1194,7 +1217,7 @@ function drawSetupScreen() {
     } else if (i < game.setupField) {
       drawText(game.setupValues[i], 80, y + 12, C.BLDG_GREY, 1);
     } else {
-      drawText(game.setupValues[i], 80, y + 12, '#444488', 1);
+      drawText(game.setupValues[i], 80, y + 12, C.DIM_BLUE, 1);
     }
   }
 
@@ -1213,7 +1236,7 @@ function drawGameOverScreen() {
 
   // Semi-transparent overlay (only draw once to avoid stacking)
   if (game.titleFrame === 2) {
-    ctx.fillStyle = 'rgba(0, 0, 80, 0.75)';
+    ctx.fillStyle = C.OVERLAY;
     ctx.fillRect(0, 0, W, H);
     game.gameOverSnapshot = ctx.getImageData(0, 0, W, H);
   }
@@ -1235,8 +1258,27 @@ function drawGameOverScreen() {
   }
 }
 
-// --- Main Game Loop ---
-function gameLoop() {
+// --- Main Game Loop (fixed 60fps timestep) ---
+const FRAME_MS = 1000 / 60;
+let lastTime = 0;
+let accumulator = 0;
+
+function gameLoop(timestamp) {
+  if (lastTime === 0) lastTime = timestamp;
+  accumulator += timestamp - lastTime;
+  lastTime = timestamp;
+
+  // Cap accumulator to avoid spiral-of-death on tab-away
+  if (accumulator > FRAME_MS * 5) accumulator = FRAME_MS * 5;
+
+  while (accumulator >= FRAME_MS) {
+    accumulator -= FRAME_MS;
+    gameTick();
+  }
+  requestAnimationFrame(gameLoop);
+}
+
+function gameTick() {
   switch (game.state) {
     case 'TITLE':
       drawTitleScreen();
@@ -1247,13 +1289,12 @@ function gameLoop() {
       break;
 
     case 'INPUT':
-      updateAi(); // no-op if not AI's turn
+      updateAi();
       restoreScene();
       drawGorilla(game.players[0].x, game.players[0].y, 0);
       drawGorilla(game.players[1].x, game.players[1].y, 0);
       drawOverlays();
       if (isAiTurn()) {
-        // Show "Computer is thinking..." instead of input prompt
         const promptX = W - 190;
         drawText('COMPUTER', promptX, 20, C.WHITE, 1);
         if (Math.floor(game.cursorTimer / 15) % 2 === 0) {
@@ -1269,7 +1310,6 @@ function gameLoop() {
       updateBanana();
       if (game.state === 'THROWING' && game.banana.active) {
         restoreScene();
-        // Draw both gorillas - thrower has raised arm
         for (let i = 0; i < 2; i++) {
           const arm = (i === game.turn) ? game.throwArm : 0;
           drawGorilla(game.players[i].x, game.players[i].y, arm);
@@ -1295,8 +1335,6 @@ function gameLoop() {
       drawGameOverScreen();
       break;
   }
-
-  requestAnimationFrame(gameLoop);
 }
 
 // --- Start ---

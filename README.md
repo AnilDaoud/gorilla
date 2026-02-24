@@ -22,7 +22,7 @@ A faithful recreation of the classic QBasic GORILLA.BAS (1991) as a single self-
 
 1. Open `gorilla.html` in any modern browser
 2. Press any key to start, configure players and points-to-win
-3. Enter an angle (0-90) and velocity (30-200) to throw a banana at your opponent
+3. Enter an angle (0-90) and velocity (1-200) to throw a banana at your opponent
 4. First to reach the target score wins
 5. Press Escape at any time to return to the title screen
 
@@ -47,6 +47,10 @@ The core game mechanics (trajectory physics, building generation, wind, scoring)
 | **Floor destruction** | Gorilla floats (no gravity) | Same — gorilla floats |
 
 Both versions have no splash damage: a near-miss that destroys the building next to a gorilla does not count as a hit. Both versions allow gorillas to float in mid-air if the building beneath them is destroyed — there is no falling/gravity code in the original.
+
+## Browser Requirements
+
+Any modern browser with Canvas API, Web Audio API, and CSS Grid support (Chrome 58+, Firefox 52+, Safari 11+, Edge 16+). On touch devices an on-screen number pad is shown automatically.
 
 ## About
 
