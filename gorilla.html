@@ -113,7 +113,7 @@ const SUN_X = W / 2;              // sun position
 const SUN_Y = 20;
 
 const numpadEl = document.getElementById('numpad');
-const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
 
 const wrapEl = document.querySelector('.wrap');
 
@@ -159,7 +159,8 @@ function autoScale() {
     canvas.style.height = (H * s) + 'px';
   }
 }
-autoScale();
+// Delay first scale so numpad has been laid out (offsetHeight > 0)
+requestAnimationFrame(autoScale);
 window.addEventListener('resize', autoScale);
 
 function simulateKey(key) {
@@ -466,6 +467,8 @@ const game = {
   angle: 0,
   velocity: 0,
   cursorTimer: 0,
+
+  throwArm: 0,
 
   // Banana flight
   banana: { active: false, x: 0, y: 0, startX: 0, startY: 0, vx: 0, vy: 0, t: 0 },
