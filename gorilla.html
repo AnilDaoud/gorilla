@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
 <title>GORILLA.BAS</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -62,11 +63,11 @@ canvas {
     <button class="np-btn" data-key="1">1</button>
     <button class="np-btn" data-key="2">2</button>
     <button class="np-btn" data-key="3">3</button>
-    <button class="np-btn" data-key="Backspace">Del</button>
+    <button class="np-btn" data-key="Backspace" aria-label="Delete">Del</button>
     <button class="np-btn" data-key="4">4</button>
     <button class="np-btn" data-key="5">5</button>
     <button class="np-btn" data-key="6">6</button>
-    <button class="np-btn" data-key="Escape">Esc</button>
+    <button class="np-btn" data-key="Escape" aria-label="Escape">Esc</button>
     <button class="np-btn" data-key="7">7</button>
     <button class="np-btn" data-key="8">8</button>
     <button class="np-btn" data-key="9">9</button>
@@ -74,7 +75,7 @@ canvas {
     <button class="np-btn" data-key="y">Y</button>
     <button class="np-btn" data-key="0">0</button>
     <button class="np-btn" data-key="n">N</button>
-    <button class="np-btn" data-key="Enter">Go</button>
+    <button class="np-btn" data-key="Enter" aria-label="Confirm">Go</button>
   </div>
 </div>
 <script>
@@ -167,15 +168,18 @@ function simulateKey(key) {
   document.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true }));
 }
 
+let lastTouchTime = 0;
 numpadEl.addEventListener('touchstart', function(e) {
   const btn = e.target.closest('.np-btn');
   if (!btn) return;
   e.preventDefault();
+  lastTouchTime = Date.now();
   ensureAudio();
   simulateKey(btn.dataset.key);
 }, { passive: false });
 
 numpadEl.addEventListener('click', function(e) {
+  if (Date.now() - lastTouchTime < 500) return;
   const btn = e.target.closest('.np-btn');
   if (!btn) return;
   ensureAudio();
@@ -396,6 +400,7 @@ function ensureAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
 }
 
 function playTone(freq, duration, type, volume) {
@@ -801,7 +806,7 @@ function handleGameInput(e) {
     }
   } else if (e.key === 'Backspace') {
     game.inputBuffer = game.inputBuffer.slice(0, -1);
-  } else if ((e.key >= '0' && e.key <= '9') || e.key === '.') {
+  } else if ((e.key >= '0' && e.key <= '9') || (e.key === '.' && !game.inputBuffer.includes('.'))) {
     if (game.inputBuffer.length < 8) {
       game.inputBuffer += e.key;
     }
@@ -856,7 +861,7 @@ function aiCalculateShot() {
 
   return {
     angle: Math.round(Math.max(5, Math.min(85, baseAngle + angleError))),
-    velocity: Math.round(Math.max(10, bestV + velError)),
+    velocity: Math.round(Math.max(10, Math.min(200, bestV + velError))),
   };
 }
 
