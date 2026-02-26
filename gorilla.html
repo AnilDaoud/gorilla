@@ -110,6 +110,16 @@ const AI_DELAY_RANGE = 30;         // random additional frames
 const AI_ERROR_START = 0.35;       // initial AI inaccuracy
 const AI_ERROR_MIN = 0.05;         // best AI accuracy after learning
 const AI_ERROR_STEP = 0.05;        // accuracy improvement per miss
+const ANGLE_MIN = 0;               // player min angle
+const ANGLE_MAX = 90;              // player max angle
+const VELOCITY_MIN = 1;            // player min velocity
+const VELOCITY_MAX = 200;          // player max velocity
+const AI_ANGLE_MIN = 5;            // AI min angle clamp
+const AI_ANGLE_MAX = 85;           // AI max angle clamp
+const AI_VELOCITY_MIN = 10;        // AI min velocity clamp
+const AI_VELOCITY_SEARCH_START = 20;  // AI velocity search range start
+const AI_VELOCITY_SEARCH_STEP = 2;    // AI velocity search increment
+const AI_ANGLE_ERROR_FACTOR = 30;     // AI angle error multiplier
 const SUN_X = W / 2;              // sun position
 const SUN_Y = 20;
 
@@ -793,14 +803,14 @@ function handleGameInput(e) {
   if (e.key === 'Enter') {
     const val = parseFloat(game.inputBuffer);
     if (game.inputField === 'angle') {
-      if (!isNaN(val) && val >= 0 && val <= 90) {
+      if (!isNaN(val) && val >= ANGLE_MIN && val <= ANGLE_MAX) {
         game.angle = val;
         game.inputField = 'velocity';
         game.inputBuffer = '';
         playMenuBeep();
       }
     } else {
-      if (!isNaN(val) && val > 0 && val <= 200) {
+      if (!isNaN(val) && val >= VELOCITY_MIN && val <= VELOCITY_MAX) {
         game.velocity = val;
         game.inputField = 'angle';
         game.inputBuffer = '';
@@ -839,7 +849,7 @@ function aiCalculateShot() {
 
   let bestV = 60;
   let bestDist = Infinity;
-  for (let v = 20; v <= 200; v += 2) {
+  for (let v = AI_VELOCITY_SEARCH_START; v <= VELOCITY_MAX; v += AI_VELOCITY_SEARCH_STEP) {
     // Simulate trajectory
     const vxSim = -cosA * v;
     const vySim = -sinA * v;
@@ -859,12 +869,12 @@ function aiCalculateShot() {
 
   // Add error that decreases as AI misses more (it "learns")
   const errorScale = Math.max(AI_ERROR_MIN, AI_ERROR_START - game.aiMissCount * AI_ERROR_STEP);
-  const angleError = (Math.random() - 0.5) * 30 * errorScale;
+  const angleError = (Math.random() - 0.5) * AI_ANGLE_ERROR_FACTOR * errorScale;
   const velError = (Math.random() - 0.5) * bestV * 0.4 * errorScale;
 
   return {
-    angle: Math.round(Math.max(5, Math.min(85, baseAngle + angleError))),
-    velocity: Math.round(Math.max(10, Math.min(200, bestV + velError))),
+    angle: Math.round(Math.max(AI_ANGLE_MIN, Math.min(AI_ANGLE_MAX, baseAngle + angleError))),
+    velocity: Math.round(Math.max(AI_VELOCITY_MIN, Math.min(VELOCITY_MAX, bestV + velError))),
   };
 }
 
@@ -1126,18 +1136,20 @@ function drawInputPrompt() {
   drawText(p.name.toUpperCase() + "'S TURN", promptX, promptY, C.WHITE, 1);
 
   if (game.inputField === 'angle') {
-    drawText('ANGLE (0-90): ' + game.inputBuffer, promptX, promptY + 12, C.WHITE, 1);
+    const anglePrompt = `ANGLE (${ANGLE_MIN}-${ANGLE_MAX}): `;
+    drawText(anglePrompt + game.inputBuffer, promptX, promptY + 12, C.WHITE, 1);
     game.cursorTimer++;
     if (game.cursorTimer % 30 < 15) {
-      const curX = promptX + textWidth('ANGLE (0-90): ' + game.inputBuffer, 1) + 2;
+      const curX = promptX + textWidth(anglePrompt + game.inputBuffer, 1) + 2;
       fillRect(curX, promptY + 12, 4, 7, C.WHITE);
     }
   } else {
     drawText('ANGLE: ' + game.angle, promptX, promptY + 12, C.WHITE, 1);
-    drawText('VELOCITY (1-200): ' + game.inputBuffer, promptX, promptY + 24, C.WHITE, 1);
+    const velPrompt = `VELOCITY (${VELOCITY_MIN}-${VELOCITY_MAX}): `;
+    drawText(velPrompt + game.inputBuffer, promptX, promptY + 24, C.WHITE, 1);
     game.cursorTimer++;
     if (game.cursorTimer % 30 < 15) {
-      const curX = promptX + textWidth('VELOCITY (1-200): ' + game.inputBuffer, 1) + 2;
+      const curX = promptX + textWidth(velPrompt + game.inputBuffer, 1) + 2;
       fillRect(curX, promptY + 24, 4, 7, C.WHITE);
     }
   }
