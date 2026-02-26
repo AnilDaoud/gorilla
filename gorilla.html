@@ -593,6 +593,7 @@ function generateBuildings() {
 function drawBuildings(buildings) {
   for (const b of buildings) {
     fillRect(b.x, b.y, b.w, b.h, b.color);
+    // Windows are drawn with margins from building edges: 5px from top, 3px from left, 2px from bottom/right
     for (let wy = b.y + 5; wy + WIN_H < b.y + b.h - 2; wy += WIN_SPACING_V) {
       for (let wx = b.x + 3; wx + WIN_W < b.x + b.w - 2; wx += WIN_SPACING_H) {
         if (Math.random() > WIN_DARK_CHANCE) {
