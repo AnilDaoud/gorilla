@@ -33,7 +33,7 @@ A faithful recreation of the classic QBasic GORILLA.BAS (1991) as a single self-
 - **Number keys / period**: Type angle and velocity values
 - **Enter**: Confirm input
 - **Backspace**: Delete input
-- **M**: Toggle sound mute (not available while typing in the setup screen; the speaker button below the game works everywhere)
+- **M**: Toggle sound mute (not available while typing in the setup screen; the speaker button below the game, or the Mute key on the on-screen number pad, works everywhere)
 - **Y / N**: Play again / back to title at game over
 - **Escape**: Quit to title screen
 

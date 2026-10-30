@@ -441,15 +441,6 @@ function restoreScene() {
   if (sceneData) ctx.putImageData(sceneData, 0, 0);
 }
 
-// Read pixel from saved scene buffer (not canvas)
-function getScenePixel(x, y) {
-  const px = Math.round(x);
-  const py = Math.round(y);
-  if (px < 0 || px >= W || py < 0 || py >= H || !sceneData) return null;
-  const idx = (py * W + px) * 4;
-  return [sceneData.data[idx], sceneData.data[idx + 1], sceneData.data[idx + 2]];
-}
-
 // Clear a circular area in the scene buffer to sky
 function clearSceneCircle(cx, cy, r) {
   const sr = SKY_RGB[0], sg = SKY_RGB[1], sb = SKY_RGB[2];
@@ -471,8 +462,14 @@ function clearSceneCircle(cx, cy, r) {
   }
 }
 
-function rgbMatch(c, ref) {
-  return c[0] === ref[0] && c[1] === ref[1] && c[2] === ref[2];
+// True if the scene pixel at (x, y) is on-screen and not sky (allocation-free)
+function isSolidAt(x, y) {
+  const px = Math.round(x);
+  const py = Math.round(y);
+  if (px < 0 || px >= W || py < 0 || py >= H || !sceneData) return false;
+  const d = sceneData.data;
+  const idx = (py * W + px) * 4;
+  return d[idx] !== SKY_RGB[0] || d[idx + 1] !== SKY_RGB[1] || d[idx + 2] !== SKY_RGB[2];
 }
 
 // --- Sound Engine (Web Audio API) ---
@@ -1011,14 +1008,15 @@ function aiCalculateShot() {
     // Simulate trajectory
     const vxSim = -cosA * v;
     const vySim = -sinA * v;
-    let hitX = sx, hitY = sy;
+    let hitX = sx, hitY = sy, prevY = sy;
     for (let t = PHYSICS_DT; t < AI_SIM_TIME_MAX; t += PHYSICS_DT) {
       hitX = sx + vxSim * t + 0.5 * windEffect * t * t;
       hitY = sy + vySim * t + 0.5 * GRAVITY * t * t;
-      // Only count crossing the target height on the way down, so a target
+      // Only stop on a real downward crossing of the target height, so a target
       // higher than the launch point is not "reached" on the first tick.
-      if (vySim + GRAVITY * t > 0 && hitY >= ty) break;
+      if (vySim + GRAVITY * t > 0 && prevY < ty && hitY >= ty) break;
       if (hitX < -OFF_SCREEN_MARGIN || hitY > H + OFF_SCREEN_MARGIN) break;
+      prevY = hitY;
     }
     const dist = Math.abs(hitX - tx);
     if (dist < bestDist) {
@@ -1100,16 +1098,12 @@ function checkCollisionAt(px, py) {
   }
 
   const s = COLLISION_SPREAD;
-  const probes = [[px, py], [px - s, py], [px + s, py], [px, py - s], [px, py + s]];
-  for (const [cx, cy] of probes) {
-    const c = getScenePixel(cx, cy);
-    if (!c) continue;
-    if (!rgbMatch(c, SKY_RGB)) {
-      b.active = false;
-      game.sunShocked = false;
-      startExplosion(px, py, -1);
-      return true;
-    }
+  if (isSolidAt(px, py) || isSolidAt(px - s, py) || isSolidAt(px + s, py) ||
+      isSolidAt(px, py - s) || isSolidAt(px, py + s)) {
+    b.active = false;
+    game.sunShocked = false;
+    startExplosion(px, py, -1);
+    return true;
   }
   return false;
 }
@@ -1350,7 +1344,7 @@ function drawTitleScreen() {
   drawSun(false);
 
   if (Math.floor(game.titleFrame / 30) % 2 === 0) {
-    drawTextCentered('PRESS ANY KEY TO START', 200, C.WHITE, 1);
+    drawTextCentered('PRESS ANY KEY (EXCEPT M) TO START', 200, C.WHITE, 1);
   }
 
   drawTextCentered('BASED ON THE 1991 QBASIC CLASSIC', 230, C.BLDG_GREY, 1);
