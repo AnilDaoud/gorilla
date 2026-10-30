@@ -85,7 +85,7 @@ canvas {
     <button class="np-btn" data-key="0">0</button>
     <button class="np-btn" data-key="n">N</button>
     <button class="np-btn" data-key="Enter" aria-label="Confirm">Go</button>
-    <button class="np-btn np-wide" data-key="m" aria-label="Toggle mute" id="muteBtn">Mute</button>
+    <button class="np-btn np-wide" aria-label="Toggle mute" id="muteBtn">Mute</button>
   </div>
 </div>
 <script>
@@ -109,6 +109,7 @@ const WIND_DIVISOR = 5;            // wind force scaling
 const GRAVITY = 9.8;
 const BANANA_LAUNCH_OFFSET = 5;    // pixels above gorilla head
 const COLLISION_SPREAD = 2;        // px offset for building hit probes
+const COLLISION_STEP = 2;          // px between collision samples along banana path
 const OFF_SCREEN_MARGIN = 30;      // px beyond edges before banana is "gone"
 const SUN_SHOCK_DIST = 40;         // banana proximity to trigger shocked sun
 const EXPLODE_GORILLA = 40;        // explosion radius for gorilla hits
@@ -138,6 +139,9 @@ const WIN_SPACING_V = 15;         // vertical window spacing
 const WIN_DARK_CHANCE = 0.4;      // probability of dark window
 const WIN_DARK_AMOUNT = 60;       // darkening value for unlit windows
 const INPUT_MAX_LENGTH = 8;       // max chars in input buffer
+const INPUT_MSG_FRAMES = 90;      // how long an invalid-input message stays visible
+const NAME_MAX_LENGTH = 16;       // max chars in a player name
+const TARGET_SCORE_MAX = 99;      // upper bound for points to win
 const SUN_X = W / 2;              // sun position
 const SUN_Y = 20;
 
@@ -182,11 +186,11 @@ function autoScale() {
     }
   } else {
     const barH = document.querySelector('.sub-bar').offsetHeight + 4;
-    const sx = Math.floor(window.innerWidth / W) || 1;
-    const sy = Math.floor((window.innerHeight - barH) / H) || 1;
-    const s = Math.min(sx, sy);
-    canvas.style.width = (W * s) + 'px';
-    canvas.style.height = (H * s) + 'px';
+    const fit = Math.max(0.1, Math.min(window.innerWidth / W, (window.innerHeight - barH) / H));
+    // Integer scale when the window is large enough, otherwise shrink to fit
+    const s = fit >= 1 ? Math.floor(fit) : fit;
+    canvas.style.width = Math.floor(W * s) + 'px';
+    canvas.style.height = Math.floor(H * s) + 'px';
   }
 }
 // Delay first scale so numpad has been laid out (offsetHeight > 0)
@@ -197,22 +201,30 @@ function simulateKey(key) {
   document.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true }));
 }
 
+function pressNumpadButton(btn) {
+  ensureAudio();
+  if (btn.id === 'muteBtn') {
+    toggleMute();
+  } else {
+    simulateKey(btn.dataset.key);
+  }
+}
+
 let lastTouchTime = 0;
 numpadEl.addEventListener('touchstart', function(e) {
   const btn = e.target.closest('.np-btn');
   if (!btn) return;
   e.preventDefault();
   lastTouchTime = Date.now();
-  ensureAudio();
-  simulateKey(btn.dataset.key);
+  pressNumpadButton(btn);
 }, { passive: false });
 
 numpadEl.addEventListener('click', function(e) {
   if (Date.now() - lastTouchTime < 500) return;
   const btn = e.target.closest('.np-btn');
   if (!btn) return;
-  ensureAudio();
-  simulateKey(btn.dataset.key);
+  pressNumpadButton(btn);
+  btn.blur(); // keep keyboard Enter/Space from re-triggering the button
 });
 
 function updateMuteUI() {
@@ -224,12 +236,14 @@ function updateMuteUI() {
 
 function toggleMute() {
   game.muted = !game.muted;
+  if (game.muted) stopAllSounds();
   updateMuteUI();
 }
 
 document.getElementById('muteToggle').addEventListener('click', function() {
   ensureAudio();
   toggleMute();
+  this.blur(); // keep keyboard Enter/Space from re-triggering the button
 });
 
 // --- EGA Color Palette ---
@@ -369,6 +383,12 @@ function drawBlinkingCursor(x, y, text, scale, color) {
   }
 }
 
+// Text with a 1px black drop shadow, readable over any background
+function drawTextShadow(str, x, y, color, scale) {
+  drawText(str, x + 1, y + 1, C.BLACK, scale);
+  drawText(str, x, y, color, scale);
+}
+
 function drawTextCentered(str, y, color, scale) {
   scale = scale || 1;
   const w = textWidth(str, scale);
@@ -381,19 +401,26 @@ function fillRect(x, y, w, h, color) {
   ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
 }
 
+// Pixel-exact (non-anti-aliased) filled circle drawn as horizontal scanlines
 function fillCircle(cx, cy, r, color) {
   ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(Math.round(cx), Math.round(cy), r, 0, Math.PI * 2);
-  ctx.fill();
+  cx = Math.round(cx);
+  cy = Math.round(cy);
+  const ri = Math.round(r);
+  for (let dy = -ri; dy <= ri; dy++) {
+    const half = Math.round(Math.sqrt(ri * ri - dy * dy));
+    ctx.fillRect(cx - half, cy + dy, half * 2 + 1, 1);
+  }
 }
 
-function strokeArc(cx, cy, r, startAngle, endAngle, color, lineWidth) {
-  ctx.strokeStyle = color;
-  ctx.lineWidth = lineWidth || 1;
-  ctx.beginPath();
-  ctx.arc(Math.round(cx), Math.round(cy), r, startAngle, endAngle);
-  ctx.stroke();
+// Pixel-exact 1px arc, plotted point by point
+function strokeArc(cx, cy, r, startAngle, endAngle, color) {
+  ctx.fillStyle = color;
+  const steps = Math.max(1, Math.ceil(r * Math.abs(endAngle - startAngle) * 2));
+  for (let i = 0; i <= steps; i++) {
+    const a = startAngle + (endAngle - startAngle) * (i / steps);
+    ctx.fillRect(Math.round(cx + Math.cos(a) * r), Math.round(cy + Math.sin(a) * r), 1, 1);
+  }
 }
 
 function clearToSky() {
@@ -449,61 +476,107 @@ function rgbMatch(c, ref) {
 }
 
 // --- Sound Engine (Web Audio API) ---
+// Tones are scheduled on the audio clock (not setTimeout) so they can be
+// cancelled together via stopAllSounds().
 let audioCtx = null;
+let audioUnsupported = false;
+const activeSounds = new Set();
+
 function ensureAudio() {
+  if (audioUnsupported) return;
   if (!audioCtx) {
-    audioCtx = new AudioContext();
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) { audioUnsupported = true; return; }
+    try {
+      audioCtx = new Ctor();
+    } catch (err) {
+      audioUnsupported = true;
+      return;
+    }
   }
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  if (audioCtx.state === 'suspended') {
+    const p = audioCtx.resume();
+    if (p && p.catch) p.catch(function() {});
+  }
 }
 
-function playTone(freq, duration, type, volume) {
+// iOS only unlocks audio from a touchend/click gesture: play a silent buffer once.
+let audioUnlocked = false;
+function unlockAudio() {
+  ensureAudio();
+  if (audioUnlocked || !audioCtx) return;
+  try {
+    const src = audioCtx.createBufferSource();
+    src.buffer = audioCtx.createBuffer(1, 1, 22050);
+    src.connect(audioCtx.destination);
+    src.start(0);
+    audioUnlocked = true;
+  } catch (err) { /* ignore */ }
+}
+document.addEventListener('touchend', unlockAudio, { passive: true });
+document.addEventListener('click', unlockAudio);
+
+function stopAllSounds() {
+  for (const osc of activeSounds) {
+    try { osc.stop(); } catch (err) { /* already stopped */ }
+  }
+  activeSounds.clear();
+}
+
+function playTone(freq, duration, type, volume, delay) {
   if (!audioCtx || game.muted) return;
   type = type || 'square';
   volume = volume !== undefined ? volume : 0.08;
+  const start = audioCtx.currentTime + (delay || 0);
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
   osc.type = type;
   osc.frequency.value = freq;
-  gain.gain.value = volume;
+  gain.gain.setValueAtTime(volume, start);
+  gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
   osc.connect(gain);
   gain.connect(audioCtx.destination);
-  osc.start(audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-  osc.stop(audioCtx.currentTime + duration);
+  activeSounds.add(osc);
+  osc.onended = function() {
+    activeSounds.delete(osc);
+    osc.disconnect();
+    gain.disconnect();
+  };
+  osc.start(start);
+  osc.stop(start + duration);
 }
 
 function playThrowSound() {
-  if (!audioCtx) return;
   for (let i = 0; i < 5; i++) {
-    setTimeout(() => playTone(300 + i * 80, 0.06), i * 40);
+    playTone(300 + i * 80, 0.06, 'square', 0.08, i * 0.04);
   }
 }
 
 function playBuildingHitSound() {
-  if (!audioCtx) return;
   playTone(100, 0.3, 'square', 0.1);
-  setTimeout(() => playTone(80, 0.3, 'square', 0.08), 100);
+  playTone(80, 0.3, 'square', 0.08, 0.1);
 }
 
 function playGorillaHitSound() {
-  if (!audioCtx) return;
   for (let i = 0; i < 8; i++) {
-    setTimeout(() => playTone(600 - i * 50, 0.15, 'square', 0.1), i * 60);
+    playTone(600 - i * 50, 0.15, 'square', 0.1, i * 0.06);
   }
-  setTimeout(() => playTone(100, 0.5, 'square', 0.12), 500);
+  playTone(100, 0.5, 'square', 0.12, 0.5);
 }
 
 function playVictorySound() {
-  if (!audioCtx) return;
   const notes = [523, 659, 784, 1047, 784, 1047];
   notes.forEach((freq, i) => {
-    setTimeout(() => playTone(freq, 0.15, 'square', 0.08), i * 120);
+    playTone(freq, 0.15, 'square', 0.08, i * 0.12);
   });
 }
 
 function playMenuBeep() {
   playTone(800, 0.05, 'square', 0.05);
+}
+
+function playErrorBeep() {
+  playTone(150, 0.12, 'square', 0.08);
 }
 
 // --- Game State ---
@@ -524,6 +597,8 @@ const game = {
   // Input
   inputField: 'angle',
   inputBuffer: '',
+  inputMsg: '',
+  inputMsgFrames: 0,
   angle: 0,
   velocity: 0,
   cursorTimer: 0,
@@ -547,7 +622,9 @@ const game = {
   titleFrame: 0,
   setupField: 0,
   setupBuffer: '',
+  setupFresh: false, // true while the buffer holds an untouched default value
   setupValues: [],
+  humanP2Name: 'Player 2', // kept separately so "Computer" never leaks into 2P mode
 
   // AI
   aiDelay: 0, // frames to wait before AI throws
@@ -562,12 +639,13 @@ function generateBuildings() {
   let slope = slopeTypes[Math.floor(Math.random() * 4)];
   let slopeLen = 3 + Math.floor(Math.random() * 4);
   let slopeIdx = 0;
-  let baseH = 80 + Math.floor(Math.random() * 80);
+  let bh = 80 + Math.floor(Math.random() * 80);
   let dir = (slope === 'up' || slope === 'invv') ? 1 : -1;
 
   while (x < W) {
     const bw = 30 + Math.floor(Math.random() * 60); // 30-89
-    let bh = baseH + dir * slopeIdx * (6 + Math.floor(Math.random() * 10));
+    // First building of a run starts at bh; each next one steps from the previous
+    if (slopeIdx > 0) bh += dir * (6 + Math.floor(Math.random() * 10));
     bh = Math.max(50, Math.min(H - 80, bh));
 
     const colors = [C.BLDG_GREY, C.BLDG_RED, C.BLDG_CYAN];
@@ -581,7 +659,7 @@ function generateBuildings() {
       slope = slopeTypes[Math.floor(Math.random() * 4)];
       slopeLen = 3 + Math.floor(Math.random() * 4);
       slopeIdx = 0;
-      baseH = 80 + Math.floor(Math.random() * 80);
+      bh = 80 + Math.floor(Math.random() * 80);
       dir = (slope === 'up' || slope === 'invv') ? 1 : -1;
     }
     if (slope === 'v' && slopeIdx === Math.floor(slopeLen / 2)) dir = 1;
@@ -677,30 +755,37 @@ function placeGorillas(buildings) {
 
 // --- Wind ---
 function generateWind() {
-  let w = -4 + Math.random() * 9;
+  let w = -4.5 + Math.random() * 9;
   if (Math.random() < 0.33) w *= 2 + Math.random() * 2;
   return Math.round(w * 10) / 10;
 }
 
 function drawWindArrow() {
   if (Math.abs(game.wind) < 0.1) {
-    drawText('WIND: NONE', W / 2 - 30, H - 14, C.WIND, 1);
+    drawTextShadow('WIND: NONE', W / 2 - 30, H - 14, C.WIND, 1);
     return;
   }
   const cx = W / 2, cy = H - 8;
-  const len = Math.round(game.wind * 6);
-
-  ctx.strokeStyle = C.WIND;
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + len, cy); ctx.stroke();
-
   const dir = game.wind > 0 ? 1 : -1;
-  ctx.beginPath();
-  ctx.moveTo(cx + len, cy); ctx.lineTo(cx + len - dir * 4, cy - 3);
-  ctx.moveTo(cx + len, cy); ctx.lineTo(cx + len - dir * 4, cy + 3);
-  ctx.stroke();
+  const len = dir * Math.max(4, Math.round(Math.abs(game.wind) * 6));
+  const tip = cx + len;
 
-  drawText('WIND', cx - 12, cy - 14, C.WIND, 1);
+  // Pixel-aligned arrow (shaft + stepped head); drawn in black at 1px offsets
+  // first so the red stays visible over red buildings.
+  function arrowShape(ox, oy, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(Math.min(cx, tip) + ox, cy - 1 + oy, Math.abs(len), 2);
+    for (let k = 0; k <= 3; k++) {
+      ctx.fillRect(tip - dir * k + ox, cy - 1 - k + oy, 1, 2 + 2 * k);
+    }
+  }
+  arrowShape(-1, 0, C.BLACK);
+  arrowShape(1, 0, C.BLACK);
+  arrowShape(0, -1, C.BLACK);
+  arrowShape(0, 1, C.BLACK);
+  arrowShape(0, 0, C.WIND);
+
+  drawTextShadow('WIND', cx - 12, cy - 14, C.WIND, 1);
 }
 
 // --- Banana Drawing ---
@@ -775,12 +860,16 @@ document.addEventListener('keydown', function(e) {
     game.banana.active = false;
     game.explosion.active = false;
     game.celebrate.active = false;
+    game.gameOver.active = false;
+    game.inputMsgFrames = 0;
+    stopAllSounds();
     return;
   }
 
-  // Mute toggle (M key, except during text input in SETUP)
+  // Mute toggle (M key, except during text input in SETUP). Ignore key repeat
+  // and browser/OS shortcuts such as Ctrl/Cmd+M.
   if ((e.key === 'm' || e.key === 'M') && game.state !== 'SETUP') {
-    toggleMute();
+    if (!e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) toggleMute();
     return;
   }
 
@@ -789,8 +878,9 @@ document.addEventListener('keydown', function(e) {
     game.cursorTimer = 0;
     game.setupField = 0;
     // Fields: 0=numPlayers, 1=p1name, 2=p2name (skipped in 1P), 3=targetScore
-    game.setupValues = ['' + game.numPlayers, game.players[0].name, game.players[1].name, '' + game.targetScore];
+    game.setupValues = ['' + game.numPlayers, game.players[0].name, game.humanP2Name, '' + game.targetScore];
     game.setupBuffer = game.setupValues[0];
+    game.setupFresh = true;
     return;
   }
 
@@ -809,7 +899,8 @@ document.addEventListener('keydown', function(e) {
     return;
   }
 
-  if (game.state === 'INPUT') {
+  // Human keystrokes must not drive the computer's turn
+  if (game.state === 'INPUT' && !isAiTurn()) {
     handleGameInput(e);
   }
 });
@@ -819,54 +910,70 @@ function handleSetupInput(e) {
     game.setupValues[game.setupField] = game.setupBuffer || game.setupValues[game.setupField];
     game.setupField++;
 
-    // After numPlayers field, if 1P mode, skip player 2 name
+    // After numPlayers field, clamp it; in 1P mode skip the player 2 name
     if (game.setupField === 1) {
-      game.numPlayers = parseInt(game.setupValues[0]) || 1;
-      if (game.numPlayers < 1) game.numPlayers = 1;
-      if (game.numPlayers > 2) game.numPlayers = 2;
+      game.numPlayers = Math.max(1, Math.min(2, parseInt(game.setupValues[0], 10) || 1));
+      game.setupValues[0] = '' + game.numPlayers;
     }
     if (game.setupField === 2 && game.numPlayers === 1) {
-      game.setupValues[2] = 'Computer';
       game.setupField = 3; // skip to target score
     }
 
     if (game.setupField >= 4) {
       game.players[0].name = game.setupValues[1] || 'Player 1';
-      game.players[1].name = game.setupValues[2] || (game.numPlayers === 1 ? 'Computer' : 'Player 2');
-      game.targetScore = parseInt(game.setupValues[3]) || 3;
-      if (game.targetScore < 1) game.targetScore = 1;
+      if (game.numPlayers === 2) {
+        game.humanP2Name = game.setupValues[2] || 'Player 2';
+        game.players[1].name = game.humanP2Name;
+      } else {
+        game.players[1].name = 'Computer';
+      }
+      game.targetScore = Math.max(1, Math.min(TARGET_SCORE_MAX, parseInt(game.setupValues[3], 10) || 3));
       startNewGame();
       return;
     }
     game.setupBuffer = game.setupValues[game.setupField];
+    game.setupFresh = true;
     playMenuBeep();
   } else if (e.key === 'Backspace') {
     game.setupBuffer = game.setupBuffer.slice(0, -1);
-  } else if (e.key.length === 1 && game.setupBuffer.length < 16) {
-    // Fields 0 (num players) and 3 (target score) are numeric only
+    game.setupFresh = false;
+  } else if (e.key.length === 1) {
+    // Fields 0 (num players) and 3 (target score) are numeric only and short
     const numericField = game.setupField === 0 || game.setupField === 3;
     if (numericField && !(e.key >= '0' && e.key <= '9')) return;
-    game.setupBuffer += e.key;
+    const maxLen = game.setupField === 0 ? 1 : game.setupField === 3 ? 2 : NAME_MAX_LENGTH;
+    // First keystroke replaces the pre-filled default instead of appending to it
+    if (game.setupFresh) {
+      game.setupBuffer = '';
+      game.setupFresh = false;
+    }
+    if (game.setupBuffer.length < maxLen) game.setupBuffer += e.key;
   }
 }
 
 function handleGameInput(e) {
   if (e.key === 'Enter') {
     const val = parseFloat(game.inputBuffer);
-    if (game.inputField === 'angle') {
-      if (!isNaN(val) && val >= ANGLE_MIN && val <= ANGLE_MAX) {
-        game.angle = val;
-        game.inputField = 'velocity';
-        game.inputBuffer = '';
-        playMenuBeep();
-      }
+    const isAngle = game.inputField === 'angle';
+    const min = isAngle ? ANGLE_MIN : VELOCITY_MIN;
+    const max = isAngle ? ANGLE_MAX : VELOCITY_MAX;
+    if (isNaN(val) || val < min || val > max) {
+      game.inputMsg = (isAngle ? 'ANGLE' : 'VELOCITY') + ' MUST BE ' + min + '-' + max;
+      game.inputMsgFrames = INPUT_MSG_FRAMES;
+      game.inputBuffer = '';
+      playErrorBeep();
+      return;
+    }
+    game.inputMsgFrames = 0;
+    game.inputBuffer = '';
+    if (isAngle) {
+      game.angle = val;
+      game.inputField = 'velocity';
+      playMenuBeep();
     } else {
-      if (!isNaN(val) && val >= VELOCITY_MIN && val <= VELOCITY_MAX) {
-        game.velocity = val;
-        game.inputField = 'angle';
-        game.inputBuffer = '';
-        startThrow();
-      }
+      game.velocity = val;
+      game.inputField = 'angle';
+      startThrow();
     }
   } else if (e.key === 'Backspace') {
     game.inputBuffer = game.inputBuffer.slice(0, -1);
@@ -908,8 +1015,10 @@ function aiCalculateShot() {
     for (let t = PHYSICS_DT; t < AI_SIM_TIME_MAX; t += PHYSICS_DT) {
       hitX = sx + vxSim * t + 0.5 * windEffect * t * t;
       hitY = sy + vySim * t + 0.5 * GRAVITY * t * t;
-      if (hitY >= ty) break;
-      if (hitX < -OFF_SCREEN_MARGIN) break;
+      // Only count crossing the target height on the way down, so a target
+      // higher than the launch point is not "reached" on the first tick.
+      if (vySim + GRAVITY * t > 0 && hitY >= ty) break;
+      if (hitX < -OFF_SCREEN_MARGIN || hitY > H + OFF_SCREEN_MARGIN) break;
     }
     const dist = Math.abs(hitX - tx);
     if (dist < bestDist) {
@@ -1020,23 +1129,23 @@ function updateBanana() {
   const distToSun = Math.sqrt((b.x - SUN_X) ** 2 + (b.y - SUN_Y) ** 2);
   game.sunShocked = distToSun < SUN_SHOCK_DIST;
 
-  // Off-screen check
-  if (b.x < -OFF_SCREEN_MARGIN || b.x > W + OFF_SCREEN_MARGIN || b.y > H + OFF_SCREEN_MARGIN) {
-    b.active = false;
-    game.sunShocked = false;
-    switchTurn();
-    return;
-  }
-
-  // Subdivide collision check along travel path to prevent tunneling
+  // Subdivide collision check along travel path to prevent tunneling. This
+  // runs before the off-screen check so the final on-screen segment is tested.
   const dx = b.x - prevX, dy = b.y - prevY;
   const dist = Math.sqrt(dx * dx + dy * dy);
-  const steps = Math.max(1, Math.ceil(dist / GORILLA_W));
+  const steps = Math.max(1, Math.ceil(dist / COLLISION_STEP));
   for (let i = 1; i <= steps; i++) {
     const frac = i / steps;
     const cx = prevX + dx * frac;
     const cy = prevY + dy * frac;
     if (checkCollisionAt(cx, cy)) return;
+  }
+
+  // Off-screen check
+  if (b.x < -OFF_SCREEN_MARGIN || b.x > W + OFF_SCREEN_MARGIN || b.y > H + OFF_SCREEN_MARGIN) {
+    b.active = false;
+    game.sunShocked = false;
+    switchTurn();
   }
 }
 
@@ -1057,10 +1166,14 @@ function startExplosion(x, y, hitPlayer) {
   }
 }
 
-function drawSceneWithGorillas() {
+// Draws the scene plus both gorillas. hiddenIdx skips one gorilla (the one that
+// was hit); armIdx/armState raise a gorilla's arm for the throw animation.
+function drawSceneWithGorillas(hiddenIdx, armIdx, armState) {
   restoreScene();
-  drawGorilla(game.players[0].x, game.players[0].y, 0);
-  drawGorilla(game.players[1].x, game.players[1].y, 0);
+  for (let i = 0; i < 2; i++) {
+    if (i === hiddenIdx) continue;
+    drawGorilla(game.players[i].x, game.players[i].y, i === armIdx ? armState : 0);
+  }
 }
 
 function updateExplosion() {
@@ -1077,18 +1190,15 @@ function updateExplosion() {
   } else if (e.frame === EXPLODE_ANIM_FRAMES + 1) {
     // Destroy building: clear area in scene buffer
     clearSceneCircle(e.x, e.y, e.maxRadius);
-    drawSceneWithGorillas();
+    drawSceneWithGorillas(e.hitPlayer);
     drawOverlays();
   } else if (e.frame > EXPLODE_ANIM_FRAMES + 10) {
     e.active = false;
 
     if (e.hitPlayer >= 0) {
-      if (e.hitPlayer === game.turn) {
-        game.players[1 - game.turn].score++;
-      } else {
-        game.players[game.turn].score++;
-      }
-      const scorer = e.hitPlayer === game.turn ? (1 - game.turn) : game.turn;
+      // Whoever was hit, the other player scores (covers hitting yourself too)
+      const scorer = 1 - e.hitPlayer;
+      game.players[scorer].score++;
       game.state = 'CELEBRATE';
       game.celebrate.active = true;
       game.celebrate.frame = 0;
@@ -1098,7 +1208,7 @@ function updateExplosion() {
       switchTurn();
     }
   } else {
-    drawSceneWithGorillas();
+    drawSceneWithGorillas(e.hitPlayer);
     drawOverlays();
   }
 }
@@ -1109,6 +1219,7 @@ function switchTurn() {
   game.turn = 1 - game.turn;
   game.inputField = 'angle';
   game.inputBuffer = '';
+  game.inputMsgFrames = 0;
   game.sunShocked = false;
   game.cursorTimer = 0;
   game.state = 'INPUT';
@@ -1158,6 +1269,7 @@ function startNewRound() {
   game.turn = 0; // Player 1 always throws first
   game.inputField = 'angle';
   game.inputBuffer = '';
+  game.inputMsgFrames = 0;
   game.sunShocked = false;
   game.banana.active = false;
   game.explosion.active = false;
@@ -1196,9 +1308,18 @@ function drawInputPrompt() {
     drawText(velPrompt + game.inputBuffer, promptX, promptY + 24, C.WHITE, 1);
     drawBlinkingCursor(promptX, promptY + 24, velPrompt + game.inputBuffer, 1, C.WHITE);
   }
+
+  if (game.inputMsgFrames > 0) {
+    const msgY = promptY + (game.inputField === 'angle' ? 24 : 36);
+    drawText(game.inputMsg, promptX, msgY, C.SUN_YELLOW, 1);
+  }
 }
 
 // --- Title Screen ---
+function titleBuildingHeight(i) {
+  return Math.round(50 + Math.sin(i * 1.3 + 0.5) * 25);
+}
+
 function drawTitleScreen() {
   clearToSky();
   game.titleFrame++;
@@ -1206,7 +1327,7 @@ function drawTitleScreen() {
   // Decorative buildings at bottom
   for (let i = 0; i < 11; i++) {
     const bx = i * 60;
-    const bh = 50 + Math.sin(i * 1.3 + 0.5) * 25;
+    const bh = titleBuildingHeight(i);
     const colors = [C.BLDG_GREY, C.BLDG_RED, C.BLDG_CYAN];
     fillRect(bx, H - bh, 58, bh, colors[i % 3]);
     // A few windows
@@ -1218,12 +1339,12 @@ function drawTitleScreen() {
   }
 
   // Gorillas on buildings
-  drawGorilla(160, H - 70, Math.floor(game.titleFrame / 15) % 3);
-  drawGorilla(480, H - 55, Math.floor((game.titleFrame + 8) / 15) % 3);
+  drawGorilla(2 * 60 + 29, H - titleBuildingHeight(2), Math.floor(game.titleFrame / 15) % 3);
+  drawGorilla(8 * 60 + 29, H - titleBuildingHeight(8), Math.floor((game.titleFrame + 8) / 15) % 3);
 
-  // Title text
-  drawTextCentered('G O R I L L A . B A S', 30, C.SUN_YELLOW, 3);
-  drawTextCentered('CANVAS EDITION', 65, C.WHITE, 2);
+  // Title text (below the sun, which spans y=4..36)
+  drawTextCentered('G O R I L L A . B A S', 44, C.SUN_YELLOW, 3);
+  drawTextCentered('CANVAS EDITION', 76, C.WHITE, 2);
 
   // Sun
   drawSun(false);
@@ -1247,8 +1368,7 @@ function drawSetupScreen() {
 
   for (let i = 0; i < 4; i++) {
     // Skip player 2 name in 1P mode
-    if (i === 2 && game.numPlayers === 1 && game.setupField > 2) continue;
-    if (i === 2 && game.numPlayers === 1 && game.setupField <= 1) continue;
+    if (i === 2 && game.numPlayers === 1) continue;
 
     const y = startY + i * 40;
     drawText(labels[i], 80, y, C.WHITE, 1);
@@ -1332,9 +1452,9 @@ function gameTick() {
 
     case 'INPUT':
       updateAi();
-      restoreScene();
-      drawGorilla(game.players[0].x, game.players[0].y, 0);
-      drawGorilla(game.players[1].x, game.players[1].y, 0);
+      if (game.state !== 'INPUT') break; // AI just threw
+      if (game.inputMsgFrames > 0) game.inputMsgFrames--;
+      drawSceneWithGorillas();
       drawOverlays();
       if (isAiTurn()) {
         const promptX = W - 190;
@@ -1351,11 +1471,7 @@ function gameTick() {
     case 'THROWING':
       updateBanana();
       if (game.state === 'THROWING' && game.banana.active) {
-        restoreScene();
-        for (let i = 0; i < 2; i++) {
-          const arm = (i === game.turn) ? game.throwArm : 0;
-          drawGorilla(game.players[i].x, game.players[i].y, arm);
-        }
+        drawSceneWithGorillas(-1, game.turn, game.throwArm);
         drawSun(game.sunShocked);
         drawScoreboard();
         drawWindArrow();
